@@ -1,40 +1,65 @@
-Below are the steps to get your plugin running. You can also find instructions at:
+# Figma Report Generator
 
-  https://www.figma.com/plugin-docs/plugin-quickstart-guide/
+A Figma plugin that extracts design data from a selected frame and outputs it as structured JSON. Useful for design-to-code workflows, design audits, and report generation.
 
-This plugin template uses Typescript and NPM, two standard tools in creating JavaScript applications.
+## Features
 
-First, download Node.js which comes with NPM. This will allow you to install TypeScript and other
-libraries. You can find the download link here:
+- Select any frame or element on the canvas
+- Extract its full node tree as JSON (id, name, type, position, dimensions, text content, children)
+- Copy the JSON output to clipboard with one click
 
-  https://nodejs.org/en/download/
+## Prerequisites
 
-Next, install TypeScript using the command:
+- [Figma Desktop App](https://www.figma.com/downloads/) (plugins do not work in the browser version)
+- [Node.js](https://nodejs.org/en/download/) (comes with npm)
 
-  npm install -g typescript
+## Setup
 
-Finally, in the directory of your plugin, get the latest type definitions for the plugin API by running:
+```bash
+# Install dependencies
+npm install
 
-  npm install --save-dev @figma/plugin-typings
+# Build the plugin
+npm run build
+```
 
-If you are familiar with JavaScript, TypeScript will look very familiar. In fact, valid JavaScript code
-is already valid Typescript code.
+This compiles `code.ts` → `code.js`, which Figma needs to load the plugin.
 
-TypeScript adds type annotations to variables. This allows code editors such as Visual Studio Code
-to provide information about the Figma API while you are writing code, as well as help catch bugs
-you previously didn't notice.
+## Loading the Plugin in Figma
 
-For more information, visit https://www.typescriptlang.org/
+1. Open a file in the **Figma desktop app**.
+2. Go to **Plugins → Development → Import plugin from manifest…**
+3. Navigate to this project folder and select `manifest.json`.
+4. The plugin will appear in your Plugins menu under Development.
 
-Using TypeScript requires a compiler to convert TypeScript (code.ts) into JavaScript (code.js)
-for the browser to run.
+## Usage
 
-We recommend writing TypeScript code using Visual Studio code:
+1. Select a **frame** (or any element) on the canvas.
+2. Run: **Plugins → Development → Figma Report Generator**.
+3. Click **"Extract Design"** in the plugin panel.
+4. The JSON data appears in the text area.
+5. Click **"Copy JSON"** to copy it to your clipboard.
 
-1. Download Visual Studio Code if you haven't already: https://code.visualstudio.com/.
-2. Open this directory in Visual Studio Code.
-3. Compile TypeScript to JavaScript: Run the "Terminal > Run Build Task..." menu item,
-    then select "npm: watch". You will have to do this again every time
-    you reopen Visual Studio Code.
+## Development
 
-That's it! Visual Studio Code will regenerate the JavaScript file every time you save.
+To watch for changes and auto-rebuild:
+
+```bash
+npm run watch
+```
+
+After each rebuild, re-run the plugin in Figma to pick up changes.
+
+> **Note:** If `npm run build` fails on Windows with a "not recognized" error, run the compiler directly:
+> ```bash
+> node node_modules/typescript/bin/tsc -p tsconfig.json
+> ```
+
+## Project Structure
+
+| File            | Description                                      |
+| --------------- | ------------------------------------------------ |
+| `code.ts`       | Plugin backend — runs in Figma's sandbox, extracts node data |
+| `ui.html`       | Plugin UI — buttons and textarea for interaction |
+| `manifest.json` | Figma plugin manifest                            |
+| `tsconfig.json` | TypeScript configuration                         |
