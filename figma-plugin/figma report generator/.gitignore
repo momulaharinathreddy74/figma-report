@@ -6,3 +6,6 @@ node_modules
 out/
 dist/
 code.js
+
+config.local.ts
+config.local.js
