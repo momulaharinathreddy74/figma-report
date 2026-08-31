@@ -4,10 +4,11 @@
   "description": "Your Figma Plugin",
   "main": "code.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "esbuild code.ts --bundle --outfile=code.js --platform=browser --target=es2020 --external:__html__",
+    "watch": "npm run build -- --watch",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "watch": "npm run build -- --watch"
+    "lint:fix": "eslint . --fix"
   },
   "author": "",
   "license": "",
@@ -15,6 +16,7 @@
     "@eslint/js": "^9.39.4",
     "@figma/eslint-plugin-figma-plugins": "*",
     "@figma/plugin-typings": "*",
+    "esbuild": "^0.28.2",
     "eslint": "^9.39.4",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.1"
