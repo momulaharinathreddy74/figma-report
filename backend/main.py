@@ -227,18 +227,7 @@ def classify_design(design_id: str):
 
         design_json = design["design_json"]
 
-        # Check whether the data is already normalized
-        if (
-            "position" in design_json
-            and "size" in design_json
-            and "texts" in design_json
-        ):
-            normalized_json = design_json
-
-        else:
-            normalized_json = normalize_node(design_json)
-
-        classified_json = classify_tree(normalized_json)
+        classified_json = classify_tree(design_json)
 
         return {
             "success": True,
