@@ -2,7 +2,6 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-
     <title>Figma Report Generator</title>
 
     <style>
@@ -15,10 +14,23 @@
         margin-top: 0;
       }
 
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
       button {
         padding: 10px 16px;
-        margin-right: 8px;
         cursor: pointer;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #f5f5f5;
+        font-size: 13px;
+      }
+
+      button:hover:not(:disabled) {
+        background: #e0e0e0;
       }
 
       button:disabled {
@@ -28,15 +40,44 @@
 
       textarea {
         width: 100%;
-        height: 400px;
+        height: 380px;
         margin-top: 15px;
         font-family: monospace;
         font-size: 12px;
+        box-sizing: border-box;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 8px;
+        resize: vertical;
       }
 
       #status {
-        margin-top: 10px;
+        margin-top: 12px;
+        padding: 6px 10px;
+        border-radius: 4px;
+        font-size: 13px;
         font-weight: bold;
+        min-height: 28px;
+      }
+
+      #status.idle {
+        background: transparent;
+        color: #555;
+      }
+
+      #status.success {
+        background: #e6f4ea;
+        color: #1e7e34;
+      }
+
+      #status.error {
+        background: #fdecea;
+        color: #b71c1c;
+      }
+
+      #status.info {
+        background: #e8f0fe;
+        color: #1a55cc;
       }
     </style>
   </head>
@@ -44,17 +85,18 @@
   <body>
     <h2>Figma Report Generator</h2>
 
-    <p>Select a frame in Figma and extract its design data.</p>
+    <p>
+      Select a frame in Figma and extract its design data.
+    </p>
 
-    <button id="extract">Extract Design</button>
+    <div class="button-row">
+      <button id="extract">Extract Design</button>
+      <button id="copy">Copy JSON</button>
+      <button id="save" disabled>Save to Database</button>
+      <button id="cancel">Cancel</button>
+    </div>
 
-    <button id="copy">Copy JSON</button>
-
-    <button id="save" disabled>Save to Database</button>
-
-    <button id="cancel">Cancel</button>
-
-    <div id="status"></div>
+    <div id="status" class="idle"></div>
 
     <textarea
       id="output"
@@ -64,135 +106,284 @@
 
     <script>
       const extractButton = document.getElementById("extract");
-
       const copyButton = document.getElementById("copy");
-
       const saveButton = document.getElementById("save");
-
       const cancelButton = document.getElementById("cancel");
 
       const output = document.getElementById("output");
-
       const status = document.getElementById("status");
 
-      // Extract button
+
+      // ---------------------------------------------------------
+      // STATUS
+      // ---------------------------------------------------------
+
+      function setStatus(text, type = "idle") {
+        status.textContent = text;
+        status.className = type;
+      }
+
+
+      // ---------------------------------------------------------
+      // EXTRACT DESIGN
+      // ---------------------------------------------------------
+
       extractButton.onclick = () => {
-        status.textContent = "Extracting design...";
 
+        setStatus(
+          "Extracting design...",
+          "info"
+        );
+
+        extractButton.disabled = true;
         saveButton.disabled = true;
+
+        output.value = "";
 
         parent.postMessage(
           {
             pluginMessage: {
-              type: "extract-design",
-            },
+              type: "extract-design"
+            }
           },
-          "*",
+          "*"
         );
       };
 
-      // Save to Database button
+
+      // ---------------------------------------------------------
+      // SAVE DESIGN
+      // ---------------------------------------------------------
+
       saveButton.onclick = () => {
-        status.textContent = "Saving to database...";
+
+        setStatus(
+          "Sending design to backend...",
+          "info"
+        );
 
         saveButton.disabled = true;
 
         parent.postMessage(
           {
             pluginMessage: {
-              type: "save-design",
-            },
+              type: "save-design"
+            }
           },
-          "*",
+          "*"
         );
       };
 
-      // Copy JSON
+
+      // ---------------------------------------------------------
+      // COPY JSON
+      // ---------------------------------------------------------
+
       copyButton.onclick = async () => {
+
         if (!output.value) {
+
+          setStatus(
+            "Nothing to copy. Extract a design first.",
+            "error"
+          );
+
           return;
         }
 
-        await navigator.clipboard.writeText(output.value);
+        try {
 
-        status.textContent = "JSON copied!";
+          await navigator.clipboard.writeText(
+            output.value
+          );
+
+          setStatus(
+            "JSON copied to clipboard!",
+            "success"
+          );
+
+        } catch (err) {
+
+          setStatus(
+            "Copy failed: " +
+              (err instanceof Error
+                ? err.message
+                : String(err)),
+            "error"
+          );
+        }
       };
 
-      // Cancel
+
+      // ---------------------------------------------------------
+      // CANCEL
+      // ---------------------------------------------------------
+
       cancelButton.onclick = () => {
+
         parent.postMessage(
           {
             pluginMessage: {
-              type: "cancel",
-            },
+              type: "cancel"
+            }
           },
-          "*",
+          "*"
         );
       };
 
-      // Receive message from code.js
+
+      // ---------------------------------------------------------
+      // MESSAGES FROM CODE.TS
+      // ---------------------------------------------------------
+
       window.onmessage = async (event) => {
-        const message = event.data.pluginMessage;
+
+        const message =
+          event.data.pluginMessage;
 
         if (!message) {
           return;
         }
 
-        // JSON received
+
+        // -------------------------------------------------------
+        // DESIGN EXTRACTED
+        // -------------------------------------------------------
+
         if (message.type === "design-data") {
-          output.value = JSON.stringify(message.data, null, 2);
 
-          status.textContent = "Design extracted successfully!";
+          output.value =
+            JSON.stringify(
+              message.data,
+              null,
+              2
+            );
 
+          setStatus(
+            "Design extracted successfully!",
+            "success"
+          );
+
+          extractButton.disabled = false;
           saveButton.disabled = false;
         }
 
-        // Perform the Supabase POST from the UI iframe (full browser fetch)
+
+        // -------------------------------------------------------
+        // SEND DESIGN TO FASTAPI
+        // -------------------------------------------------------
+
         if (message.type === "perform-save") {
-          console.log("[v2] perform-save received, fetching from UI iframe:", message.url);
-          status.textContent = "Saving to database (UI fetch)...";
+
+          setStatus(
+            "Saving design to database...",
+            "info"
+          );
+
           try {
-            const response = await fetch(message.url, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "apikey": message.apikey,
-                "Authorization": "Bearer " + message.apikey,
-                "Prefer": "return=minimal",
-              },
-              body: JSON.stringify(message.body),
-            });
+
+            const response = await fetch(
+              message.url,
+              {
+                method: "POST",
+
+                headers: {
+                  "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify(
+                  message.body
+                )
+              }
+            );
+
+
+            const result =
+              await response.json();
+
 
             if (!response.ok) {
-              const errorText = await response.text();
-              status.textContent = "Database error: HTTP " + response.status + ": " + errorText;
+
+              setStatus(
+                "Save failed: " +
+                  JSON.stringify(result),
+                "error"
+              );
+
             } else {
-              status.textContent = "Design saved to database!";
+
+              setStatus(
+                "Design saved successfully!",
+                "success"
+              );
+
+              console.log(
+                "FastAPI response:",
+                result
+              );
             }
+
           } catch (err) {
-            status.textContent = "Database error: " + (err instanceof Error ? err.message : String(err));
+
+            setStatus(
+              "Backend connection failed: " +
+                (err instanceof Error
+                  ? err.message
+                  : String(err)),
+              "error"
+            );
           }
 
+
           saveButton.disabled = false;
         }
 
-        // Save success (kept for any future direct code.ts success path)
+
+        // -------------------------------------------------------
+        // SAVE SUCCESS
+        // -------------------------------------------------------
+
         if (message.type === "save-success") {
-          status.textContent = "Design saved to database!";
+
+          setStatus(
+            "Design saved successfully!",
+            "success"
+          );
 
           saveButton.disabled = false;
         }
 
-        // Save error from code.ts (e.g. no design data guard)
+
+        // -------------------------------------------------------
+        // SAVE ERROR
+        // -------------------------------------------------------
+
         if (message.type === "save-error") {
-          status.textContent = "Database error: " + message.message;
+
+          setStatus(
+            "Save failed: " +
+              message.message,
+            "error"
+          );
 
           saveButton.disabled = false;
         }
 
-        // Error received
+
+        // -------------------------------------------------------
+        // GENERAL ERROR
+        // -------------------------------------------------------
+
         if (message.type === "error") {
-          status.textContent = "Error: " + message.message;
+
+          setStatus(
+            "Error: " +
+              message.message,
+            "error"
+          );
+
+          extractButton.disabled = false;
+          saveButton.disabled = true;
         }
       };
     </script>
