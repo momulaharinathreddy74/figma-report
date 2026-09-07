@@ -1,238 +1,130 @@
 import re
 
 
-# ============================================================
-# BASIC HELPERS
-# ============================================================
+# ---------------------------------------------------------
+# 1. Collect all text inside a node
+# ---------------------------------------------------------
 
-def get_name(node):
-    return str(node.get("name") or "").strip()
-
-
-def get_lower_name(node):
-    return get_name(node).lower()
-
-
-def get_texts(node):
-    """
-    Get text directly stored in this normalized node.
-    """
-    texts = node.get("texts", [])
-
-    if not isinstance(texts, list):
-        return []
-
-    return [
-        str(text).strip()
-        for text in texts
-        if text and str(text).strip()
-    ]
-
-
-def get_all_text(node):
-    """
-    Collect text from this node and all descendants.
-    """
+def collect_text(node):
     texts = []
 
-    texts.extend(get_texts(node))
+    for text in node.get("texts", []):
+        if text:
+            texts.append(str(text))
 
     for child in node.get("children", []):
-        texts.extend(get_all_text(child))
+        texts.extend(collect_text(child))
 
     return texts
 
 
-def get_combined_text(node):
-    return " ".join(get_all_text(node)).strip()
+def get_all_text(node):
+    return " ".join(collect_text(node)).strip()
 
 
-def get_position(node):
-    return node.get(
-        "position",
-        {
-            "x": 0,
-            "y": 0
-        }
-    )
+# ---------------------------------------------------------
+# 2. Basic helpers
+# ---------------------------------------------------------
+
+def contains_number(text):
+    return bool(re.search(r"\d", text))
 
 
-def get_size(node):
-    return node.get(
-        "size",
-        {
-            "width": 0,
-            "height": 0
-        }
-    )
+def contains_percentage(text):
+    return bool(re.search(r"\d+(\.\d+)?\s*%", text))
 
 
-def get_width(node):
-    return get_size(node).get("width", 0) or 0
+def is_number_or_value(text):
+    """
+    Detect values such as:
+    15%
+    120k
+    $50k
+    1.2M
+    500
+    """
+    text = text.strip()
 
+    pattern = r"""
+        ^\s*
+        [\$€£₹]?
+        \d+(?:\.\d+)?
+        [kKmMbB%]?
+        \s*
+        $
+    """
 
-def get_height(node):
-    return get_size(node).get("height", 0) or 0
+    return bool(re.match(pattern, text, re.VERBOSE))
 
 
 def word_exists(text, word):
     return bool(
         re.search(
-            rf"\b{re.escape(word.lower())}\b",
+            rf"\b{re.escape(word)}\b",
             text.lower()
         )
     )
 
 
-def contains_number(text):
-    return bool(
-        re.search(
-            r"[-+]?\d+(?:,\d{3})*(?:\.\d+)?",
-            text
-        )
-    )
+# ---------------------------------------------------------
+# 3. Ignore visual-only nodes
+# ---------------------------------------------------------
 
+def is_visual_node(node):
 
-def contains_percentage(text):
-    return bool(
-        re.search(
-            r"[-+]?\d+(?:\.\d+)?\s*%",
-            text
-        )
-    )
+    name = (node.get("name") or "").lower()
+    figma_type = (node.get("figma_type") or "").upper()
 
-
-def contains_currency(text):
-    return bool(
-        re.search(
-            r"[$₹€£]\s*[-+]?\d",
-            text
-        )
-    )
-
-
-# ============================================================
-# LOW LEVEL NODE DETECTION
-# ============================================================
-
-def is_low_level_node(node):
-
-    name = get_lower_name(node)
-
-    figma_type = str(
-        node.get("figma_type") or ""
-    ).upper()
-
-    low_level_names = [
+    ignored_names = [
         "vector",
-        "ellipse",
         "rectangle",
+        "ellipse",
         "line",
         "icon",
         "avatar",
-        "logo",
         "divider",
-        "background",
-        "mask"
+        "background"
     ]
 
-    for word in low_level_names:
-        if word in name:
-            return True
+    if any(word in name for word in ignored_names):
+        return True
 
-    low_level_types = [
+    if figma_type in [
         "VECTOR",
         "ELLIPSE",
-        "LINE",
-        "STAR",
-        "POLYGON",
-        "BOOLEAN_OPERATION"
-    ]
-
-    if figma_type in low_level_types:
+        "RECTANGLE",
+        "LINE"
+    ]:
         return True
 
     return False
 
 
-# ============================================================
-# COMPONENT NAME HINTS
-# ============================================================
+# ---------------------------------------------------------
+# 4. KPI detection
+# ---------------------------------------------------------
 
-def has_kpi_name(node):
+def kpi_score(node):
 
-    name = get_lower_name(node)
+    name = (node.get("name") or "").lower()
 
-    keywords = [
-        "kpi",
-        "metric",
-        "big number",
-        "big_number",
-        "stat",
-        "statistic",
-        "metric card",
-        "summary card",
-        "number card"
-    ]
-
-    return any(
-        keyword in name
-        for keyword in keywords
-    )
-
-
-def has_chart_name(node):
-
-    name = get_lower_name(node)
-
-    keywords = [
-        "chart",
-        "graph",
-        "plot",
-        "bar chart",
-        "line chart",
-        "pie chart",
-        "donut chart",
-        "area chart",
-        "scatter"
-    ]
-
-    return any(
-        keyword in name
-        for keyword in keywords
-    )
-
-
-def has_table_name(node):
-
-    name = get_lower_name(node)
-
-    keywords = [
-        "table",
-        "data table",
-        "grid",
-        "data grid"
-    ]
-
-    return any(
-        keyword in name
-        for keyword in keywords
-    )
-
-
-# ============================================================
-# KPI CLASSIFICATION
-# ============================================================
-
-def kpi_score(node, text):
-
-    score = 0
-    name = get_lower_name(node)
+    text = get_all_text(node)
     text_lower = text.lower()
 
-    # Very strong Figma naming clue
-    if has_kpi_name(node):
-        score += 7
+    score = 0
+
+    # Strong Figma/component names
+    if "big number" in name:
+        score += 10
+
+    if "kpi" in name:
+        score += 10
+
+    if "metric" in name:
+        score += 8
+
+    if "card" in name:
+        score += 5
 
     # KPI-related words
     kpi_keywords = [
@@ -255,297 +147,240 @@ def kpi_score(node, text):
         "amount",
         "cost",
         "expenses",
-        "visitors",
-        "retention"
+        "visitors"
     ]
-
-    keyword_found = False
 
     for keyword in kpi_keywords:
         if word_exists(text_lower, keyword):
-            keyword_found = True
+            score += 3
             break
 
-    if keyword_found:
-        score += 3
-
-    # Numeric value is important
+    # KPI normally contains a number
     if contains_number(text):
         score += 3
 
-    # Percentage is especially strong
+    # Percentage is a strong KPI signal
     if contains_percentage(text):
         score += 3
 
-    # Currency is strong KPI evidence
-    if contains_currency(text):
-        score += 2
-
-    # Cards/widgets are common KPI containers
-    if "card" in name or "widget" in name:
-        score += 2
-
-    # KPI is normally not huge
-    width = get_width(node)
-    height = get_height(node)
-
-    if width > 0 and height > 0:
-
-        if width <= 500 and height <= 300:
-            score += 2
-
-        if width > 800 or height > 600:
-            score -= 2
-
     return score
 
 
-# ============================================================
-# CHART CLASSIFICATION
-# ============================================================
+# ---------------------------------------------------------
+# 5. Chart detection
+# ---------------------------------------------------------
 
-def chart_score(node, text):
+def chart_score(node):
 
-    score = 0
+    name = (node.get("name") or "").lower()
+    text = get_all_text(node)
     text_lower = text.lower()
 
-    # Very strong name
-    if has_chart_name(node):
+    score = 0
+
+    # Strong component names
+    if word_exists(name, "chart"):
+        score += 10
+
+    if word_exists(name, "graph"):
+        score += 10
+
+    if "plot" in name:
         score += 8
 
+    # Explicit chart-related words
     chart_keywords = [
         "trend",
+        "analytics",
+        "statistics",
         "monthly",
         "weekly",
         "yearly",
-        "analytics",
-        "statistics",
         "timeline",
         "distribution",
         "comparison",
-        "sales by",
-        "revenue by",
         "growth by",
-        "performance by"
+        "sales by",
+        "revenue by"
     ]
 
-    keyword_count = 0
-
     for keyword in chart_keywords:
-        if word_exists(text_lower, keyword):
-            keyword_count += 1
+        if keyword in text_lower:
+            score += 3
 
-    if keyword_count >= 1:
-        score += 3
+    # Repeated children often indicate chart structure
+    children = node.get("children", [])
 
-    if keyword_count >= 2:
+    if len(children) >= 5:
         score += 2
 
-    # Charts usually contain several graphical children
-    child_count = len(node.get("children", []))
+    # Names such as Top states often represent
+    # ranking/bar-chart components
+    if "top states" in name:
+        score += 10
 
-    if child_count >= 5:
-        score += 2
+    if "top products" in name:
+        score += 8
 
-    if child_count >= 10:
-        score += 2
+    if "top customers" in name:
+        score += 8
 
-    # Charts are normally larger than KPI cards
-    width = get_width(node)
-    height = get_height(node)
-
-    if width >= 400 and height >= 200:
-        score += 2
-
-    if width >= 500 and height >= 250:
-        score += 2
+    if "top regions" in name:
+        score += 8
 
     return score
 
 
-# ============================================================
-# TABLE CLASSIFICATION
-# ============================================================
+# ---------------------------------------------------------
+# 6. Table detection
+# ---------------------------------------------------------
 
-def table_score(node, text):
+def table_score(node):
 
-    score = 0
+    name = (node.get("name") or "").lower()
+    text = get_all_text(node)
     text_lower = text.lower()
 
-    # Strong name
-    if has_table_name(node):
+    score = 0
+
+    if word_exists(name, "table"):
+        score += 10
+
+    if word_exists(name, "grid"):
         score += 8
 
     table_keywords = [
-        "customer",
-        "customers",
-        "transaction",
         "transactions",
-        "record",
         "records",
-        "employee",
         "employees",
-        "product",
         "products",
-        "order",
+        "customers",
         "orders",
         "invoice",
-        "invoices",
         "status",
         "category",
         "description"
     ]
 
-    keyword_count = 0
+    matches = 0
 
     for keyword in table_keywords:
         if word_exists(text_lower, keyword):
-            keyword_count += 1
+            matches += 1
 
-    if keyword_count >= 1:
-        score += 3
+    if matches >= 2:
+        score += 6
 
-    if keyword_count >= 2:
+    if len(node.get("children", [])) >= 8:
         score += 2
-
-    # Tables usually have many children
-    child_count = len(node.get("children", []))
-
-    if child_count >= 8:
-        score += 2
-
-    if child_count >= 15:
-        score += 3
-
-    # Tables are usually wide
-    width = get_width(node)
-
-    if width >= 500:
-        score += 1
-
-    if width >= 700:
-        score += 1
 
     return score
 
 
-# ============================================================
-# COMPONENT CLASSIFICATION
-# ============================================================
+# ---------------------------------------------------------
+# 7. Classify component
+# ---------------------------------------------------------
 
 def classify_component(node):
 
-    if is_low_level_node(node):
+    if is_visual_node(node):
         return "OTHER"
 
-    name = get_name(node)
-    text = get_combined_text(node)
-
-    # --------------------------------------------------------
-    # Strong explicit names should take priority
-    # --------------------------------------------------------
-
-    if has_kpi_name(node):
-        return "KPI"
-
-    if has_chart_name(node):
-        return "CHART"
-
-    if has_table_name(node):
-        return "TABLE"
-
-    # --------------------------------------------------------
-    # Otherwise use scores
-    # --------------------------------------------------------
-
     scores = {
-        "KPI": kpi_score(node, text),
-        "CHART": chart_score(node, text),
-        "TABLE": table_score(node, text)
+        "KPI": kpi_score(node),
+        "CHART": chart_score(node),
+        "TABLE": table_score(node)
     }
 
-    best_type = max(
-        scores,
-        key=scores.get
-    )
-
+    best_type = max(scores, key=scores.get)
     best_score = scores[best_type]
 
-    # Require reasonable evidence
-    if best_score < 5:
+    # If there is not enough evidence
+    if best_score < 4:
         return "OTHER"
 
     return best_type
 
 
-# ============================================================
-# EXTRACT KPI INFORMATION
-# ============================================================
+# ---------------------------------------------------------
+# 8. Extract KPI information
+# ---------------------------------------------------------
 
 def extract_kpi(node):
 
-    texts = get_all_text(node)
+    texts = collect_text(node)
 
     title = None
     value = None
-    description_parts = []
+    description = None
 
-    # --------------------------------------------------------
-    # Find value
-    # --------------------------------------------------------
+    # First identify numeric-looking text
+    numeric_texts = []
+
+    for text in texts:
+
+        text = text.strip()
+
+        if not text:
+            continue
+
+        if is_number_or_value(text):
+            numeric_texts.append(text)
+
+    # -----------------------------------------------------
+    # Value
+    # -----------------------------------------------------
+
+    if numeric_texts:
+        value = numeric_texts[0]
+
+    # -----------------------------------------------------
+    # Description
+    # -----------------------------------------------------
+
+    description_keywords = [
+        "increase",
+        "decrease",
+        "compared",
+        "last week",
+        "last month",
+        "last year",
+        "previous",
+        "change",
+        "growth"
+    ]
 
     for text in texts:
 
-        if contains_percentage(text):
-            value = text
+        text_lower = text.lower()
+
+        if any(
+            keyword in text_lower
+            for keyword in description_keywords
+        ):
+            description = text
             break
 
-        if contains_currency(text):
-            value = text
-            break
-
-    # If no percentage/currency, look for numeric value
-    if value is None:
-
-        for text in texts:
-
-            if contains_number(text):
-                value = text
-                break
-
-    # --------------------------------------------------------
-    # Find title
-    # --------------------------------------------------------
+    # -----------------------------------------------------
+    # Title
+    # -----------------------------------------------------
 
     for text in texts:
+
+        text = text.strip()
+
+        if not text:
+            continue
 
         if text == value:
             continue
 
-        # Avoid using long sentences as title
-        if len(text.split()) <= 8:
+        if text == description:
+            continue
+
+        if not contains_number(text):
             title = text
             break
-
-    # --------------------------------------------------------
-    # Remaining text = description
-    # --------------------------------------------------------
-
-    for text in texts:
-
-        if text == value:
-            continue
-
-        if text == title:
-            continue
-
-        description_parts.append(text)
-
-    description = (
-        " ".join(description_parts)
-        if description_parts
-        else None
-    )
 
     return {
         "title": title,
@@ -554,183 +389,212 @@ def extract_kpi(node):
     }
 
 
-# ============================================================
-# EXTRACT CHART INFORMATION
-# ============================================================
-
-def extract_chart(node):
-
-    texts = get_all_text(node)
-
-    title = None
-
-    if texts:
-        title = texts[0]
-
-    chart_type = detect_chart_type(node)
-
-    return {
-        "title": title,
-        "chart_type": chart_type
-    }
-
+# ---------------------------------------------------------
+# 9. Detect chart type
+# ---------------------------------------------------------
 
 def detect_chart_type(node):
 
-    name = get_lower_name(node)
-    text = get_combined_text(node).lower()
+    name = (node.get("name") or "").lower()
+    text = get_all_text(node).lower()
 
-    combined = name + " " + text
-
-    if "bar" in combined:
-        return "BAR"
-
-    if "line" in combined:
+    # Explicit names
+    if "line chart" in name or "line graph" in name:
         return "LINE"
 
-    if "pie" in combined:
+    if "bar chart" in name or "bar graph" in name:
+        return "BAR"
+
+    if "pie chart" in name:
         return "PIE"
 
-    if "donut" in combined:
-        return "DONUT"
-
-    if "area" in combined:
+    if "area chart" in name:
         return "AREA"
 
-    if "scatter" in combined:
-        return "SCATTER"
+    # Top/ranking components are usually bars
+    if (
+        "top states" in name
+        or "top products" in name
+        or "top customers" in name
+        or "top regions" in name
+    ):
+        return "BAR"
+
+    # Look for line/bar related words
+    if "line" in text:
+        return "LINE"
+
+    if "bar" in text:
+        return "BAR"
+
+    if "pie" in text:
+        return "PIE"
+
+    if "area" in text:
+        return "AREA"
+
+    # If we have many repeated children,
+    # BAR is a reasonable structural guess
+    children = node.get("children", [])
+
+    if len(children) >= 5:
+        return "BAR"
 
     return "UNKNOWN"
 
 
-# ============================================================
-# EXTRACT TABLE INFORMATION
-# ============================================================
+# ---------------------------------------------------------
+# 10. Extract chart information
+# ---------------------------------------------------------
 
-def extract_table(node):
+def extract_chart(node):
 
-    texts = get_all_text(node)
+    texts = collect_text(node)
 
     title = None
 
-    if texts:
-        title = texts[0]
+    name = node.get("name")
+
+    # If component name itself is meaningful
+    if name and name.lower() not in [
+        "chart",
+        "graph",
+        "line chart",
+        "bar chart"
+    ]:
+        title = name
+
+    # Otherwise find a text title
+    if title is None:
+
+        for text in texts:
+
+            text = text.strip()
+
+            if not text:
+                continue
+
+            if is_number_or_value(text):
+                continue
+
+            if len(text) > 1:
+                title = text
+                break
 
     return {
-        "title": title
+        "title": title,
+        "chart_type": detect_chart_type(node)
     }
 
 
-# ============================================================
-# BUILD COMPONENT
-# ============================================================
+# ---------------------------------------------------------
+# 11. Extract table information
+# ---------------------------------------------------------
 
-def build_component(node, component_type):
+def extract_table(node):
+
+    texts = collect_text(node)
+
+    title = node.get("name")
+
+    if title and title.lower() in ["table", "data table", "grid"]:
+        title = None
+
+    if title is None:
+
+        for text in texts:
+
+            text = text.strip()
+
+            if text:
+                title = text
+                break
+
+    return {
+        "title": title,
+        "columns": [],
+        "rows": []
+    }
+
+
+# ---------------------------------------------------------
+# 12. Build classified component
+# ---------------------------------------------------------
+
+def build_component(node):
+
+    component_type = classify_component(node)
 
     component = {
         "id": node.get("id"),
-        "name": get_name(node),
+        "name": node.get("name"),
         "type": component_type,
-
-        "position": get_position(node),
-        "size": get_size(node)
+        "position": node.get("position", {
+            "x": 0,
+            "y": 0
+        }),
+        "size": node.get("size", {
+            "width": 0,
+            "height": 0
+        })
     }
 
-    # --------------------------------------------------------
     # KPI
-    # --------------------------------------------------------
-
     if component_type == "KPI":
 
-        kpi = extract_kpi(node)
+        kpi_data = extract_kpi(node)
 
         component.update({
-            "title": kpi["title"],
-            "value": kpi["value"],
-            "description": kpi["description"]
+            "title": kpi_data["title"],
+            "value": kpi_data["value"],
+            "description": kpi_data["description"]
         })
 
-    # --------------------------------------------------------
     # CHART
-    # --------------------------------------------------------
-
     elif component_type == "CHART":
 
-        chart = extract_chart(node)
+        chart_data = extract_chart(node)
 
         component.update({
-            "title": chart["title"],
-            "chart_type": chart["chart_type"]
+            "title": chart_data["title"],
+            "chart_type": chart_data["chart_type"]
         })
 
-    # --------------------------------------------------------
     # TABLE
-    # --------------------------------------------------------
-
     elif component_type == "TABLE":
 
-        table = extract_table(node)
+        table_data = extract_table(node)
 
         component.update({
-            "title": table["title"]
+            "title": table_data["title"],
+            "columns": table_data["columns"],
+            "rows": table_data["rows"]
         })
 
     return component
 
 
-# ============================================================
-# COMPONENT TREE TRAVERSAL
-# ============================================================
+# ---------------------------------------------------------
+# 13. Find actual dashboard components
+# ---------------------------------------------------------
 
-def find_components(node, components=None):
-
-    if components is None:
-        components = []
-
-    if is_low_level_node(node):
-        return components
+def find_components(node, components):
 
     component_type = classify_component(node)
 
-    # --------------------------------------------------------
-    # If this is a real dashboard component,
-    # treat the entire subtree as ONE component.
-    # --------------------------------------------------------
+    # Only add meaningful components
+    if component_type in ["KPI", "CHART", "TABLE"]:
 
-    if component_type in [
-        "KPI",
-        "CHART",
-        "TABLE"
-    ]:
-
-        component = build_component(
-            node,
-            component_type
+        components.append(
+            build_component(node)
         )
 
-        components.append(component)
+        # Important:
+        # Do not recursively add every child of a detected
+        # component as another dashboard component.
+        return
 
-        # IMPORTANT:
-        #
-        # Don't recursively classify children.
-        #
-        # Example:
-        #
-        # Big number
-        #   ├── Revenue
-        #   ├── $25,000
-        #   └── +12%
-        #
-        # should produce ONE KPI.
-        #
-
-        return components
-
-    # --------------------------------------------------------
-    # If current node isn't a component,
-    # search its children.
-    # --------------------------------------------------------
-
+    # Otherwise inspect children
     for child in node.get("children", []):
 
         find_components(
@@ -738,26 +602,33 @@ def find_components(node, components=None):
             components
         )
 
-    return components
 
+# ---------------------------------------------------------
+# 14. Main classification function
+# ---------------------------------------------------------
 
-# ============================================================
-# FINAL CLASSIFIER
-# ============================================================
+def classify_tree(node):
 
-def classify_tree(normalized_data):
+    components = []
 
-    components = find_components(normalized_data)
+    find_components(
+        node,
+        components
+    )
 
     return {
         "dashboard": {
-            "id": normalized_data.get("id"),
-            "name": normalized_data.get("name"),
-            "position": get_position(normalized_data),
-            "size": get_size(normalized_data)
+            "id": node.get("id"),
+            "name": node.get("name"),
+            "position": node.get("position", {
+                "x": 0,
+                "y": 0
+            }),
+            "size": node.get("size", {
+                "width": 0,
+                "height": 0
+            })
         },
-
         "components": components,
-
         "component_count": len(components)
     }
