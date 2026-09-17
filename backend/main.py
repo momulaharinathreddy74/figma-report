@@ -1,5 +1,4 @@
 
-
 import os
 
 from dotenv import load_dotenv
@@ -203,7 +202,7 @@ def normalize_design(design_id: str):
             detail=str(e)
         )
 # -------------------------
-# Classify normalized design
+# Classify design
 # -------------------------
 
 @app.post("/designs/{design_id}/classify")
@@ -223,23 +222,21 @@ def classify_design(design_id: str):
                 detail="Design not found"
             )
 
-        design = response.data[0]
+        raw_json = response.data[0]["design_json"]
 
-        design_json = design["design_json"]
-
-        classified_json = classify_tree(design_json)
+        # Always re-normalize from raw Figma JSON so texts are
+        # freshly aggregated — never use a cached normalized form
+        normalized = normalize_node(raw_json)
+        classified = classify_tree(normalized)
 
         return {
-            "success": True,
-            "design_id": design_id,
-            "classified_design": classified_json
+            "success":           True,
+            "design_id":         design_id,
+            "classified_design": classified,
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))

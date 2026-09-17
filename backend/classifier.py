@@ -1,386 +1,538 @@
 import re
+from typing import Any, Dict, List, Tuple
 
 
-# ---------------------------------------------------------
-# 1. Collect all text inside a node
-# ---------------------------------------------------------
+# ============================================================
+# KEYWORDS
+# ============================================================
 
-def collect_text(node):
-    texts = []
+KEYWORDS = {
+    "KPI": [
+        "revenue", "sales", "profit", "income", "expense",
+        "orders", "customers", "users", "growth", "conversion",
+        "sessions", "downloads", "transactions", "balance",
+        "budget", "target", "total", "average", "avg"
+    ],
 
-    for text in node.get("texts", []):
-        if text:
-            texts.append(str(text))
+    "CHART": [
+        "chart", "graph", "analytics", "trend", "statistics",
+        "performance", "overview", "activity"
+    ],
 
-    for child in node.get("children", []):
-        texts.extend(collect_text(child))
+    "TABLE": [
+        "table", "records", "transactions", "transaction history",
+        "recent orders", "recent transactions", "customer list",
+        "user list"
+    ],
 
-    return texts
+    "SIDEBAR": [
+        "sidebar", "side bar", "side menu", "left menu",
+        "navigation panel"
+    ],
 
+    "NAV": [
+        "navbar", "navigation", "menu", "breadcrumb"
+    ],
 
-def get_all_text(node):
-    return " ".join(collect_text(node)).strip()
+    "HEADER": [
+        "header", "topbar", "top bar", "toolbar",
+        "page title", "welcome", "greeting"
+    ],
 
+    "FILTER": [
+        "filter", "filters", "search", "sort", "dropdown",
+        "select", "date picker", "calendar", "date range"
+    ],
 
-# ---------------------------------------------------------
-# 2. Basic helpers
-# ---------------------------------------------------------
-
-def contains_number(text):
-    return bool(re.search(r"\d", text))
-
-
-def contains_percentage(text):
-    return bool(re.search(r"\d+(\.\d+)?\s*%", text))
-
-
-def is_number_or_value(text):
-    """
-    Detect values such as:
-    15%
-    120k
-    $50k
-    1.2M
-    500
-    """
-    text = text.strip()
-
-    pattern = r"""
-        ^\s*
-        [\$€£₹]?
-        \d+(?:\.\d+)?
-        [kKmMbB%]?
-        \s*
-        $
-    """
-
-    return bool(re.match(pattern, text, re.VERBOSE))
+    "LIST": [
+        "list", "activity", "notifications", "messages",
+        "recent", "items", "tasks", "events"
+    ]
+}
 
 
-def word_exists(text, word):
+MIN_SCORE = 5
+MIN_MARGIN = 2
+
+
+# ============================================================
+# BASIC HELPERS
+# ============================================================
+
+def get_name(node: Dict[str, Any]) -> str:
+    return str(node.get("name", "")).strip()
+
+
+def get_type(node: Dict[str, Any]) -> str:
+    return str(
+        node.get("figma_type") or node.get("type") or ""
+    ).upper()
+
+
+def get_texts(node: Dict[str, Any]) -> List[str]:
+    texts = node.get("texts", [])
+
+    if isinstance(texts, str):
+        return [texts]
+
+    if not isinstance(texts, list):
+        return []
+
+    result = []
+
+    for item in texts:
+        if isinstance(item, dict):
+            text = (
+                item.get("characters")
+                or item.get("text")
+                or item.get("value")
+                or item.get("content")
+            )
+            if text:
+                result.append(str(text))
+        elif item:
+            result.append(str(item))
+
+    if node.get("characters"):
+        result.append(str(node["characters"]))
+
+    if node.get("text"):
+        result.append(str(node["text"]))
+
+    return result
+
+
+def get_all_text(node: Dict[str, Any]) -> str:
+    return " ".join(get_texts(node)).lower().strip()
+
+
+def get_children(node: Dict[str, Any]) -> List[Dict[str, Any]]:
+    children = node.get("children", [])
+
+    if not isinstance(children, list):
+        return []
+
+    return [
+        child for child in children
+        if isinstance(child, dict)
+    ]
+
+
+def get_position(node: Dict[str, Any]) -> Tuple[float, float]:
+    position = node.get("position", {})
+
+    if not isinstance(position, dict):
+        position = {}
+
+    try:
+        x = float(position.get("x", node.get("x", 0)) or 0)
+        y = float(position.get("y", node.get("y", 0)) or 0)
+        return x, y
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+
+
+def get_size(node: Dict[str, Any]) -> Tuple[float, float]:
+    size = node.get("size", {})
+
+    if not isinstance(size, dict):
+        size = {}
+
+    try:
+        width = float(size.get("width", node.get("width", 0)) or 0)
+        height = float(size.get("height", node.get("height", 0)) or 0)
+        return width, height
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+
+
+def contains_keyword(text: str, keywords: List[str]) -> bool:
+    text = text.lower()
+
+    return any(keyword in text for keyword in keywords)
+
+
+def matched_keywords(text: str, keywords: List[str]) -> List[str]:
+    text = text.lower()
+
+    return [
+        keyword for keyword in keywords
+        if keyword in text
+    ]
+
+
+def is_numeric(text: str) -> bool:
+    text = text.strip().replace(",", "")
+
+    return bool(
+        re.fullmatch(
+            r"[₹$€£]?\s*-?\d+(\.\d+)?[KMBkmb%]?",
+            text
+        )
+    )
+
+
+def is_percentage(text: str) -> bool:
+    return bool(
+        re.search(r"[-+]?\d+(\.\d+)?\s*%", text)
+    )
+
+
+def is_money(text: str) -> bool:
     return bool(
         re.search(
-            rf"\b{re.escape(word)}\b",
+            r"[₹$€£]\s*\d+|\d+\s*(usd|inr|eur|gbp)",
             text.lower()
         )
     )
 
 
-# ---------------------------------------------------------
-# 3. Ignore visual-only nodes
-# ---------------------------------------------------------
+def is_date(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b"
+            r"|\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b"
+            r"|\b(today|yesterday|tomorrow)\b",
+            text.lower()
+        )
+    )
 
-def is_visual_node(node):
 
-    name = (node.get("name") or "").lower()
-    figma_type = (node.get("figma_type") or "").upper()
-
-    ignored_names = [
-        "vector",
-        "rectangle",
-        "ellipse",
-        "line",
-        "icon",
-        "avatar",
-        "divider",
-        "background"
-    ]
-
-    if any(word in name for word in ignored_names):
-        return True
-
-    if figma_type in [
-        "VECTOR",
-        "ELLIPSE",
+def is_visual_only(node: Dict[str, Any]) -> bool:
+    visual_types = {
         "RECTANGLE",
-        "LINE"
-    ]:
-        return True
-
-    return False
-
-
-# ---------------------------------------------------------
-# 4. KPI detection
-# ---------------------------------------------------------
-
-def kpi_score(node):
-
-    name = (node.get("name") or "").lower()
-
-    text = get_all_text(node)
-    text_lower = text.lower()
-
-    score = 0
-
-    # Strong Figma/component names
-    if "big number" in name:
-        score += 10
-
-    if "kpi" in name:
-        score += 10
-
-    if "metric" in name:
-        score += 8
-
-    if "card" in name:
-        score += 5
-
-    # KPI-related words
-    kpi_keywords = [
-        "revenue",
-        "sales",
-        "profit",
-        "income",
-        "users",
-        "customers",
-        "orders",
-        "growth",
-        "conversion",
-        "rate",
-        "deals",
-        "target",
-        "performance",
-        "goal",
-        "total",
-        "average",
-        "amount",
-        "cost",
-        "expenses",
-        "visitors"
-    ]
-
-    for keyword in kpi_keywords:
-        if word_exists(text_lower, keyword):
-            score += 3
-            break
-
-    # KPI normally contains a number
-    if contains_number(text):
-        score += 3
-
-    # Percentage is a strong KPI signal
-    if contains_percentage(text):
-        score += 3
-
-    return score
-
-
-# ---------------------------------------------------------
-# 5. Chart detection
-# ---------------------------------------------------------
-
-def chart_score(node):
-
-    name = (node.get("name") or "").lower()
-    text = get_all_text(node)
-    text_lower = text.lower()
-
-    score = 0
-
-    # Strong component names
-    if word_exists(name, "chart"):
-        score += 10
-
-    if word_exists(name, "graph"):
-        score += 10
-
-    if "plot" in name:
-        score += 8
-
-    # Explicit chart-related words
-    chart_keywords = [
-        "trend",
-        "analytics",
-        "statistics",
-        "monthly",
-        "weekly",
-        "yearly",
-        "timeline",
-        "distribution",
-        "comparison",
-        "growth by",
-        "sales by",
-        "revenue by"
-    ]
-
-    for keyword in chart_keywords:
-        if keyword in text_lower:
-            score += 3
-
-    # Repeated children often indicate chart structure
-    children = node.get("children", [])
-
-    if len(children) >= 5:
-        score += 2
-
-    # Names such as Top states often represent
-    # ranking/bar-chart components
-    if "top states" in name:
-        score += 10
-
-    if "top products" in name:
-        score += 8
-
-    if "top customers" in name:
-        score += 8
-
-    if "top regions" in name:
-        score += 8
-
-    return score
-
-
-# ---------------------------------------------------------
-# 6. Table detection
-# ---------------------------------------------------------
-
-def table_score(node):
-
-    name = (node.get("name") or "").lower()
-    text = get_all_text(node)
-    text_lower = text.lower()
-
-    score = 0
-
-    if word_exists(name, "table"):
-        score += 10
-
-    if word_exists(name, "grid"):
-        score += 8
-
-    table_keywords = [
-        "transactions",
-        "records",
-        "employees",
-        "products",
-        "customers",
-        "orders",
-        "invoice",
-        "status",
-        "category",
-        "description"
-    ]
-
-    matches = 0
-
-    for keyword in table_keywords:
-        if word_exists(text_lower, keyword):
-            matches += 1
-
-    if matches >= 2:
-        score += 6
-
-    if len(node.get("children", [])) >= 8:
-        score += 2
-
-    return score
-
-
-# ---------------------------------------------------------
-# 7. Classify component
-# ---------------------------------------------------------
-
-def classify_component(node):
-
-    if is_visual_node(node):
-        return "OTHER"
-
-    scores = {
-        "KPI": kpi_score(node),
-        "CHART": chart_score(node),
-        "TABLE": table_score(node)
+        "ELLIPSE",
+        "LINE",
+        "VECTOR",
+        "POLYGON",
+        "STAR"
     }
 
-    best_type = max(scores, key=scores.get)
-    best_score = scores[best_type]
-
-    # If there is not enough evidence
-    if best_score < 4:
-        return "OTHER"
-
-    return best_type
+    return (
+        get_type(node) in visual_types
+        and len(get_texts(node)) == 0
+    )
 
 
-# ---------------------------------------------------------
-# 8. Extract KPI information
-# ---------------------------------------------------------
+# ============================================================
+# DASHBOARD ROOT DETECTION
+# ============================================================
 
-def extract_kpi(node):
+def is_dashboard_root(node: Dict[str, Any]) -> bool:
+    name = get_name(node).lower()
 
-    texts = collect_text(node)
-
-    title = None
-    value = None
-    description = None
-
-    # First identify numeric-looking text
-    numeric_texts = []
-
-    for text in texts:
-
-        text = text.strip()
-
-        if not text:
-            continue
-
-        if is_number_or_value(text):
-            numeric_texts.append(text)
-
-    # -----------------------------------------------------
-    # Value
-    # -----------------------------------------------------
-
-    if numeric_texts:
-        value = numeric_texts[0]
-
-    # -----------------------------------------------------
-    # Description
-    # -----------------------------------------------------
-
-    description_keywords = [
-        "increase",
-        "decrease",
-        "compared",
-        "last week",
-        "last month",
-        "last year",
-        "previous",
-        "change",
-        "growth"
+    root_words = [
+        "dashboard",
+        "report",
+        "analytics",
+        "admin panel",
+        "admin dashboard",
+        "main frame",
+        "screen",
+        "canvas"
     ]
 
+    return (
+        any(word in name for word in root_words)
+        and len(get_children(node)) > 0
+    )
+
+
+# ============================================================
+# COMPONENT SCORING
+# ============================================================
+
+def calculate_scores(node: Dict[str, Any]) -> Dict[str, int]:
+    name = get_name(node).lower()
+    text = get_all_text(node)
+    combined = f"{name} {text}"
+
+    children = get_children(node)
+    texts = get_texts(node)
+
+    width, height = get_size(node)
+
+    scores = {label: 0 for label in KEYWORDS}
+
+    # --------------------------------------------------------
+    # Keyword-based scoring
+    # --------------------------------------------------------
+
+    for label, words in KEYWORDS.items():
+
+        if contains_keyword(name, words):
+            scores[label] += 6
+
+        if contains_keyword(text, words):
+            scores[label] += 2
+
+    # --------------------------------------------------------
+    # KPI-specific signals
+    # --------------------------------------------------------
+
+    numeric_values = sum(
+        is_numeric(t) or is_percentage(t) or is_money(t)
+        for t in texts
+    )
+
+    if numeric_values >= 1:
+        scores["KPI"] += 4
+
+    if numeric_values >= 2:
+        scores["KPI"] += 2
+
+    if any(is_percentage(t) for t in texts):
+        scores["KPI"] += 2
+
+    if any(is_money(t) for t in texts):
+        scores["KPI"] += 2
+
+    if 0 < len(texts) <= 6:
+        scores["KPI"] += 1
+
+    # KPI cards are compact — large nodes are not KPIs
+    if width > 700 or height > 350:
+        scores["KPI"] -= 8
+
+    # KPI cards have few texts — too many means it's a chart/table
+    if len(texts) > 10:
+        scores["KPI"] -= 6
+    elif len(texts) > 6:
+        scores["KPI"] -= 3
+
+    # --------------------------------------------------------
+    # Chart-specific signals
+    # --------------------------------------------------------
+
+    if len(children) >= 5:
+        scores["CHART"] += 3
+
+    if len(children) >= 10:
+        scores["CHART"] += 2
+
+    if width > 0 and height > 0 and width / height > 1.2:
+        scores["CHART"] += 2
+
+    month_count = sum(
+        1 for t in texts
+        if t.strip().lower()[:3] in {
+            "jan", "feb", "mar", "apr", "may", "jun",
+            "jul", "aug", "sep", "oct", "nov", "dec"
+        }
+    )
+
+    if month_count >= 6:
+        scores["CHART"] += 8
+    elif month_count >= 3:
+        scores["CHART"] += 5
+    elif month_count >= 1:
+        scores["CHART"] += 2
+
+    day_count = sum(
+        1 for t in texts
+        if t.strip().lower()[:3] in {
+            "sun", "mon", "tue", "wed", "thu", "fri", "sat"
+        }
+    )
+
+    if day_count >= 5:
+        scores["CHART"] += 7
+    elif day_count >= 3:
+        scores["CHART"] += 4
+
+    # Many money/numeric values in a large node → chart axes
+    if numeric_values >= 4 and (width > 300 or height > 200):
+        scores["CHART"] += 4
+
+    pct_count = sum(1 for t in texts if is_percentage(t))
+    if pct_count >= 3:
+        scores["CHART"] += 6
+
+    # --------------------------------------------------------
+    # Table-specific signals
+    # --------------------------------------------------------
+
+    table_header_words = {
+        "name", "price", "status", "options", "date", "amount",
+        "quantity", "total", "description", "category", "id",
+        "type", "email", "phone", "tracking", "order", "orders",
+        "product", "products", "in stock", "action", "actions"
+    }
+    header_hits = sum(1 for t in texts if t.lower().strip() in table_header_words)
+    if header_hits >= 4:
+        scores["TABLE"] += 10
+    elif header_hits >= 2:
+        scores["TABLE"] += 5
+
+    if len(texts) >= 6:
+        scores["TABLE"] += 2
+
+    if len(children) >= 8:
+        scores["TABLE"] += 3
+
+    if sum(is_date(t) for t in texts) >= 2:
+        scores["TABLE"] += 2
+
+    # Wide and tall → likely table
+    if width >= 500 and height >= 150:
+        scores["TABLE"] += 3
+
+    # --------------------------------------------------------
+    # Sidebar-specific signals
+    # --------------------------------------------------------
+
+    if len(children) >= 3:
+        scores["SIDEBAR"] += 2
+
+    if width > 0 and height > 0 and width / height < 0.45:
+        scores["SIDEBAR"] += 3
+
+    # --------------------------------------------------------
+    # Navigation-specific signals
+    # --------------------------------------------------------
+
+    if len(children) >= 2:
+        scores["NAV"] += 2
+
+    if width > 0 and height > 0 and width / height > 2:
+        scores["NAV"] += 2
+
+    # --------------------------------------------------------
+    # Header-specific signals
+    # --------------------------------------------------------
+
+    if len(children) >= 1:
+        scores["HEADER"] += 1
+
+    if width > 0 and height > 0 and width / height > 2:
+        scores["HEADER"] += 2
+
+    # --------------------------------------------------------
+    # Filter-specific signals
+    # --------------------------------------------------------
+
+    if 1 <= len(children) <= 10:
+        scores["FILTER"] += 2
+
+    if any(is_date(t) for t in texts):
+        scores["FILTER"] += 2
+
+    # --------------------------------------------------------
+    # List-specific signals
+    # --------------------------------------------------------
+
+    if len(children) >= 3:
+        scores["LIST"] += 2
+
+    if len(children) >= 8:
+        scores["LIST"] += 2
+
+    return scores
+
+
+# ============================================================
+# CLASSIFICATION
+# ============================================================
+
+def classify_node(node: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(node, dict):
+        return {
+            "label": "OTHER",
+            "confidence": 0.0,
+            "score": 0,
+            "scores": {}
+        }
+
+    if is_visual_only(node):
+        return {
+            "label": "OTHER",
+            "confidence": 0.0,
+            "score": 0,
+            "scores": {},
+            "reason": "visual_only"
+        }
+
+    scores = calculate_scores(node)
+
+    ranked = sorted(
+        scores.items(),
+        key=lambda item: item[1],
+        reverse=True
+    )
+
+    best_label, best_score = ranked[0]
+    second_score = ranked[1][1]
+
+    if best_score < MIN_SCORE:
+        return {
+            "label": "OTHER",
+            "confidence": 0.0,
+            "score": best_score,
+            "scores": scores,
+            "reason": "low_score"
+        }
+
+    if best_score - second_score < MIN_MARGIN:
+        return {
+            "label": "OTHER",
+            "confidence": 0.0,
+            "score": best_score,
+            "scores": scores,
+            "reason": "ambiguous"
+        }
+
+    max_score = max(scores.values()) or 1
+
+    confidence = round(
+        min(
+            0.99,
+            (best_score / max_score) * 0.7
+            + ((best_score - second_score) / 10) * 0.3
+        ),
+        3
+    )
+
+    return {
+        "label": best_label,
+        "confidence": confidence,
+        "score": best_score,
+        "scores": scores,
+        "keywords": matched_keywords(
+            get_name(node) + " " + get_all_text(node),
+            KEYWORDS[best_label]
+        )
+    }
+
+
+# ============================================================
+# FIELD EXTRACTION
+# ============================================================
+
+def extract_kpi_fields(node: Dict[str, Any]) -> Dict[str, Any]:
+    texts = get_texts(node)
+
+    value = None
+    title = None
+    description = None
+
     for text in texts:
-
-        text_lower = text.lower()
-
-        if any(
-            keyword in text_lower
-            for keyword in description_keywords
-        ):
-            description = text
-            break
-
-    # -----------------------------------------------------
-    # Title
-    # -----------------------------------------------------
-
-    for text in texts:
-
         text = text.strip()
 
         if not text:
             continue
 
-        if text == value:
-            continue
+        if value is None and (
+            is_numeric(text)
+            or is_percentage(text)
+            or is_money(text)
+        ):
+            value = text
 
-        if text == description:
-            continue
-
-        if not contains_number(text):
+        elif title is None:
             title = text
-            break
+
+        elif description is None:
+            description = text
 
     return {
         "title": title,
@@ -389,126 +541,43 @@ def extract_kpi(node):
     }
 
 
-# ---------------------------------------------------------
-# 9. Detect chart type
-# ---------------------------------------------------------
+def extract_chart_fields(node: Dict[str, Any]) -> Dict[str, Any]:
+    name = (
+        get_name(node) + " " + get_all_text(node)
+    ).lower()
 
-def detect_chart_type(node):
+    chart_type = "UNKNOWN"
 
-    name = (node.get("name") or "").lower()
-    text = get_all_text(node).lower()
-
-    # Explicit names
-    if "line chart" in name or "line graph" in name:
-        return "LINE"
-
-    if "bar chart" in name or "bar graph" in name:
-        return "BAR"
-
-    if "pie chart" in name:
-        return "PIE"
-
-    if "area chart" in name:
-        return "AREA"
-
-    # Top/ranking components are usually bars
-    if (
-        "top states" in name
-        or "top products" in name
-        or "top customers" in name
-        or "top regions" in name
-    ):
-        return "BAR"
-
-    # Look for line/bar related words
-    if "line" in text:
-        return "LINE"
-
-    if "bar" in text:
-        return "BAR"
-
-    if "pie" in text:
-        return "PIE"
-
-    if "area" in text:
-        return "AREA"
-
-    # If we have many repeated children,
-    # BAR is a reasonable structural guess
-    children = node.get("children", [])
-
-    if len(children) >= 5:
-        return "BAR"
-
-    return "UNKNOWN"
-
-
-# ---------------------------------------------------------
-# 10. Extract chart information
-# ---------------------------------------------------------
-
-def extract_chart(node):
-
-    texts = collect_text(node)
+    if "line" in name:
+        chart_type = "LINE"
+    elif "bar" in name:
+        chart_type = "BAR"
+    elif "pie" in name or "donut" in name:
+        chart_type = "PIE"
+    elif "area" in name:
+        chart_type = "AREA"
 
     title = None
 
-    name = node.get("name")
-
-    # If component name itself is meaningful
-    if name and name.lower() not in [
-        "chart",
-        "graph",
-        "line chart",
-        "bar chart"
-    ]:
-        title = name
-
-    # Otherwise find a text title
-    if title is None:
-
-        for text in texts:
-
-            text = text.strip()
-
-            if not text:
-                continue
-
-            if is_number_or_value(text):
-                continue
-
-            if len(text) > 1:
-                title = text
-                break
+    for text in get_texts(node):
+        if (
+            not is_numeric(text)
+            and not is_percentage(text)
+            and not is_date(text)
+        ):
+            title = text.strip()
+            break
 
     return {
         "title": title,
-        "chart_type": detect_chart_type(node)
+        "chart_type": chart_type
     }
 
 
-# ---------------------------------------------------------
-# 11. Extract table information
-# ---------------------------------------------------------
+def extract_table_fields(node: Dict[str, Any]) -> Dict[str, Any]:
+    texts = get_texts(node)
 
-def extract_table(node):
-
-    texts = collect_text(node)
-
-    title = node.get("name")
-
-    if title and title.lower() in ["table", "data table", "grid"]:
-        title = None
-
-    if title is None:
-
-        for text in texts:
-
-            text = text.strip()
-
-            if text:
-                title = text
-                break
+    title = texts[0] if texts else get_name(node)
 
     return {
         "title": title,
@@ -517,118 +586,215 @@ def extract_table(node):
     }
 
 
-# ---------------------------------------------------------
-# 12. Build classified component
-# ---------------------------------------------------------
+def extract_generic_fields(
+    node: Dict[str, Any],
+    label: str
+) -> Dict[str, Any]:
 
-def build_component(node):
+    texts = get_texts(node)
 
-    component_type = classify_component(node)
+    if label in ["SIDEBAR", "NAV", "LIST"]:
+        return {
+            "title": get_name(node),
+            "items": texts
+        }
 
-    component = {
+    if label == "HEADER":
+        return {
+            "title": texts[0] if texts else get_name(node),
+            "texts": texts
+        }
+
+    if label == "FILTER":
+        return {
+            "label": get_name(node),
+            "options": texts
+        }
+
+    return {}
+
+
+def extract_fields(
+    node: Dict[str, Any],
+    label: str
+) -> Dict[str, Any]:
+
+    if label == "KPI":
+        return extract_kpi_fields(node)
+
+    if label == "CHART":
+        return extract_chart_fields(node)
+
+    if label == "TABLE":
+        return extract_table_fields(node)
+
+    return extract_generic_fields(node, label)
+
+
+# ============================================================
+# COMPONENT CREATION
+# ============================================================
+
+def build_component(
+    node: Dict[str, Any],
+    classification: Dict[str, Any]
+) -> Dict[str, Any]:
+
+    label = classification["label"]
+    x, y = get_position(node)
+    width, height = get_size(node)
+
+    return {
         "id": node.get("id"),
-        "name": node.get("name"),
-        "type": component_type,
-        "position": node.get("position", {
-            "x": 0,
-            "y": 0
-        }),
-        "size": node.get("size", {
-            "width": 0,
-            "height": 0
-        })
+        "name": get_name(node),
+        "type": label,
+        "figma_type": get_type(node),
+        "position": {
+            "x": x,
+            "y": y
+        },
+        "size": {
+            "width": width,
+            "height": height
+        },
+        "confidence": classification["confidence"],
+        "score": classification["score"],
+        "signals": classification.get("keywords", []),
+        "fields": extract_fields(node, label)
     }
 
-    # KPI
-    if component_type == "KPI":
 
-        kpi_data = extract_kpi(node)
+# ============================================================
+# RECURSIVE TREE CLASSIFICATION
+# ============================================================
 
-        component.update({
-            "title": kpi_data["title"],
-            "value": kpi_data["value"],
-            "description": kpi_data["description"]
-        })
+def find_components(
+    node: Dict[str, Any],
+    components: List[Dict[str, Any]]
+) -> None:
 
-    # CHART
-    elif component_type == "CHART":
-
-        chart_data = extract_chart(node)
-
-        component.update({
-            "title": chart_data["title"],
-            "chart_type": chart_data["chart_type"]
-        })
-
-    # TABLE
-    elif component_type == "TABLE":
-
-        table_data = extract_table(node)
-
-        component.update({
-            "title": table_data["title"],
-            "columns": table_data["columns"],
-            "rows": table_data["rows"]
-        })
-
-    return component
-
-
-# ---------------------------------------------------------
-# 13. Find actual dashboard components
-# ---------------------------------------------------------
-
-def find_components(node, components):
-
-    component_type = classify_component(node)
-
-    # Only add meaningful components
-    if component_type in ["KPI", "CHART", "TABLE"]:
-
-        components.append(
-            build_component(node)
-        )
-
-        # Important:
-        # Do not recursively add every child of a detected
-        # component as another dashboard component.
+    if not isinstance(node, dict):
         return
 
-    # Otherwise inspect children
-    for child in node.get("children", []):
+    # Skip dashboard root and inspect its children
+    if is_dashboard_root(node):
+        for child in get_children(node):
+            find_components(child, components)
+        return
 
-        find_components(
-            child,
-            components
-        )
+    classification = classify_node(node)
+    label = classification["label"]
+
+    # If classified as OTHER, continue searching children
+    if label == "OTHER":
+        for child in get_children(node):
+            find_components(child, components)
+        return
+
+    # Add detected component
+    components.append(
+        build_component(node, classification)
+    )
 
 
-# ---------------------------------------------------------
-# 14. Main classification function
-# ---------------------------------------------------------
+# ============================================================
+# PUBLIC FUNCTION
+# ============================================================
 
-def classify_tree(node):
-
+def classify_tree(root: Dict[str, Any]) -> Dict[str, Any]:
     components = []
 
-    find_components(
-        node,
-        components
+    find_components(root, components)
+
+    components.sort(
+        key=lambda item: (
+            item["position"]["y"],
+            item["position"]["x"]
+        )
     )
 
     return {
-        "dashboard": {
-            "id": node.get("id"),
-            "name": node.get("name"),
-            "position": node.get("position", {
-                "x": 0,
-                "y": 0
-            }),
-            "size": node.get("size", {
-                "width": 0,
-                "height": 0
-            })
-        },
-        "components": components,
-        "component_count": len(components)
+        "dashboard_name": get_name(root) or "Untitled Dashboard",
+        "component_count": len(components),
+        "components": components
     }
+
+
+# ============================================================
+# TEST
+# ============================================================
+
+if __name__ == "__main__":
+
+    sample_data = {
+        "id": "root",
+        "name": "Sales Dashboard",
+        "figma_type": "FRAME",
+        "position": {"x": 0, "y": 0},
+        "size": {"width": 1440, "height": 900},
+        "children": [
+            {
+                "id": "kpi1",
+                "name": "Total Revenue",
+                "figma_type": "FRAME",
+                "position": {"x": 50, "y": 50},
+                "size": {"width": 250, "height": 120},
+                "texts": [
+                    "Total Revenue",
+                    "$125,000",
+                    "+12.4%",
+                    "vs last month"
+                ],
+                "children": []
+            },
+            {
+                "id": "chart1",
+                "name": "Revenue Overview",
+                "figma_type": "FRAME",
+                "position": {"x": 50, "y": 220},
+                "size": {"width": 700, "height": 350},
+                "texts": [
+                    "Revenue Overview",
+                    "Jan",
+                    "Feb",
+                    "Mar",
+                    "Apr",
+                    "May"
+                ],
+                "children": [
+                    {"id": "line1", "name": "Line", "type": "VECTOR"}
+                ]
+            },
+            {
+                "id": "table1",
+                "name": "Recent Transactions",
+                "figma_type": "FRAME",
+                "position": {"x": 800, "y": 220},
+                "size": {"width": 550, "height": 350},
+                "texts": [
+                    "Recent Transactions",
+                    "ID",
+                    "Customer",
+                    "Amount",
+                    "Date",
+                    "1001",
+                    "Rahul",
+                    "$500",
+                    "12/01/2026"
+                ],
+                "children": []
+            }
+        ]
+    }
+
+    import json
+
+    result = classify_tree(sample_data)
+
+    print(
+        json.dumps(
+            result,
+            indent=2,
+            ensure_ascii=False
+        )
+    )
