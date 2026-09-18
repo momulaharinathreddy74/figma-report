@@ -1,12 +1,15 @@
-
 import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from supabase import create_client, Client
 from normalizer import normalize_node
 from classifier import classify_tree
+from validator import validate_classified_design
+from renderer import render_dashboard_html
+from Orchestrator import generate_dashboard_config
 
 load_dotenv()
 
@@ -233,6 +236,93 @@ def classify_design(design_id: str):
             "success":           True,
             "design_id":         design_id,
             "classified_design": classified,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------
+# Render design as an HTML preview
+# -------------------------
+
+@app.get("/designs/{design_id}/render", response_class=HTMLResponse)
+def render_design(design_id: str):
+    try:
+        response = (
+            supabase
+            .table("designs")
+            .select("*")
+            .eq("id", design_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Design not found"
+            )
+
+        raw_json = response.data[0]["design_json"]
+
+        # Same normalize -> classify path as /classify, plus a
+        # validation pass so the preview can flag broken components
+        # instead of you eyeballing the JSON against a screenshot.
+        normalized = normalize_node(raw_json)
+        classified = classify_tree(normalized)
+        validation = validate_classified_design(classified)
+
+        html = render_dashboard_html(classified, validation)
+
+        return HTMLResponse(content=html)
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------
+# Orchestrate design into a dashboard_config
+# -------------------------
+
+@app.post("/designs/{design_id}/orchestrate")
+def orchestrate_design(design_id: str):
+    try:
+        response = (
+            supabase
+            .table("designs")
+            .select("*")
+            .eq("id", design_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Design not found"
+            )
+
+        raw_json = response.data[0]["design_json"]
+
+        # Same normalize -> classify -> validate path as /render, then
+        # hand off to the orchestrator: deterministic layout for every
+        # component, plus a targeted LLM call for each validator-flagged
+        # one (zero LLM calls if the design is already clean).
+        normalized = normalize_node(raw_json)
+        classified = classify_tree(normalized)
+        validation = validate_classified_design(classified)
+        dashboard_config = generate_dashboard_config(classified, validation)
+
+        return {
+            "success": True,
+            "design_id": design_id,
+            "validation": validation,
+            "dashboard_config": dashboard_config,
         }
 
     except HTTPException:
