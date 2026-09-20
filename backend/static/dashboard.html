@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backend Manager - Figma Report</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 20px auto;
+      max-width: 1000px;
+      line-height: 1.5;
+      color: #222;
+      background: #f9f9fb;
+      padding: 0 15px 40px;
+    }
+    h1, h2, h3 { color: #111; margin-top: 20px; margin-bottom: 10px; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: bold;
+      border-radius: 4px;
+      background: #e2e8f0;
+      color: #334155;
+    }
+    .badge.get  { background: #dbeafe; color: #1e40af; }
+    .badge.post { background: #dcfce7; color: #166534; }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #475569;
+    }
+    input[type="text"], textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+      margin-bottom: 10px;
+      font-family: inherit;
+    }
+    textarea { font-family: monospace; font-size: 12px; resize: vertical; }
+    button {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+    button:hover            { background: #1d4ed8; }
+    button.secondary        { background: #e2e8f0; color: #1e293b; }
+    button.secondary:hover  { background: #cbd5e1; }
+    button.accent           { background: #059669; }
+    button.accent:hover     { background: #047857; }
+    button.purple           { background: #7c3aed; }
+    button.purple:hover     { background: #6d28d9; }
+    button.orange           { background: #ea580c; }
+    button.orange:hover     { background: #c2410c; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #e2e8f0; }
+    th { background: #f8fafc; color: #475569; }
+    .output-box {
+      background: #0f172a;
+      color: #f8fafc;
+      border-radius: 8px;
+      padding: 14px;
+      font-family: Consolas, Monaco, "Courier New", monospace;
+      font-size: 13px;
+      overflow-x: auto;
+      max-height: 450px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: #64748b;
+    }
+    .actions-inline { display: flex; gap: 4px; flex-wrap: wrap; }
+    .actions-inline button { padding: 4px 8px; font-size: 11px; margin: 0; }
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .pill-kpi   { background: #dbeafe; color: #1e40af; }
+    .pill-chart { background: #fef9c3; color: #713f12; }
+    .pill-table { background: #dcfce7; color: #166534; }
+    .pill-other { background: #f1f5f9; color: #475569; }
+  </style>
+</head>
+<body>
+
+  <h1>🛠 Backend Manager</h1>
+  <p style="color:#64748b;margin-top:-5px;">Interact with FastAPI endpoints — no Swagger needed.</p>
+
+  <!-- Console -->
+  <div class="card" style="border-color:#cbd5e1;">
+    <div class="status-bar">
+      <div><strong>Console</strong>: <span id="req-info" style="color:#2563eb;">Ready</span></div>
+      <div>
+        <button class="secondary" onclick="copyResponse()">Copy</button>
+        <button class="secondary" onclick="downloadResponse()">⬇ Download JSON</button>
+        <button class="secondary" onclick="clearResponse()">Clear</button>
+      </div>
+    </div>
+    <pre id="output" class="output-box">// Responses will appear here...</pre>
+  </div>
+
+  <!-- 1. List designs -->
+  <div class="card">
+    <h2>1. List Saved Designs <span class="badge get">GET /designs</span></h2>
+    <p style="font-size:13px;color:#64748b;">Fetch all designs saved in Supabase.</p>
+    <button onclick="fetchAllDesigns()">Fetch All Designs</button>
+    <div id="designs-table-container" style="display:none;margin-top:15px;">
+      <table>
+        <thead><tr><th>Name</th><th>Node ID</th><th>Design ID</th><th>Actions</th></tr></thead>
+        <tbody id="designs-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 2. Operations by ID -->
+  <div class="card">
+    <h2>2. Design Operations by ID</h2>
+    <label for="input-design-id">Design ID:</label>
+    <input type="text" id="input-design-id" placeholder="e.g. d68a3f89-8d74-4ec5-85db-2bfe35d115e8">
+    <div style="margin-top:8px;">
+      <button class="secondary" onclick="getDesignById()">
+        <span class="badge get">GET</span> /designs/{id}
+      </button>
+      <button class="accent" onclick="normalizeDesign()">
+        <span class="badge post">POST</span> /designs/{id}/normalize
+      </button>
+      <button class="purple" onclick="classifyDesign()">
+        <span class="badge post">POST</span> /designs/{id}/classify
+      </button>
+      <button class="orange" onclick="orchestrateDesign()">
+        <span class="badge post">POST</span> /designs/{id}/orchestrate
+      </button>
+    </div>
+
+    <!-- Classify results card -->
+    <div id="classify-results" style="display:none;margin-top:20px;">
+      <h3 style="margin-top:0;">Classified Components</h3>
+      <div id="components-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;"></div>
+    </div>
+  </div>
+
+  <!-- 3. Save design -->
+  <div class="card">
+    <h2>3. Save New Design <span class="badge post">POST /designs</span></h2>
+    <label for="save-name">Design Name:</label>
+    <input type="text" id="save-name" placeholder="e.g. Sales Analytics Dashboard" value="Test Dashboard">
+    <label for="save-node-id">Figma Node ID:</label>
+    <input type="text" id="save-node-id" placeholder="e.g. 0:1" value="0:1">
+    <label for="save-json">Design JSON:</label>
+    <textarea id="save-json" rows="8">{
+  "id": "0:1",
+  "name": "Test Frame",
+  "type": "FRAME",
+  "width": 1440,
+  "height": 900,
+  "children": [
+    {
+      "id": "1:2",
+      "name": "KPI Card",
+      "type": "FRAME",
+      "x": 40, "y": 40, "width": 300, "height": 160,
+      "children": [
+        { "id": "1:3", "name": "Revenue", "type": "TEXT", "characters": "$124,500" }
+      ]
+    }
+  ]
+}</textarea>
+    <button onclick="saveDesign()">Save Design</button>
+  </div>
+
+  <!-- 4. Health -->
+  <div class="card">
+    <h2>4. Health Check <span class="badge get">GET /health</span></h2>
+    <button class="secondary" onclick="checkHealth()">Test Connection</button>
+    <a href="/docs" target="_blank" style="margin-left:10px;font-size:13px;color:#2563eb;">Open Swagger /docs →</a>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+
+    function displayResponse(endpoint, method, status, data, timeMs) {
+      document.getElementById("req-info").textContent =
+        `${method} ${endpoint} — ${status} (${timeMs}ms)`;
+      document.getElementById("output").textContent =
+        typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    }
+
+    async function apiRequest(endpoint, options = {}) {
+      const t0 = performance.now();
+      const method = options.method || "GET";
+      document.getElementById("req-info").textContent = `Calling ${method} ${endpoint}...`;
+      try {
+        const res = await fetch(`${API_BASE}${endpoint}`, {
+          headers: { "Content-Type": "application/json" },
+          ...options
+        });
+        const elapsed = Math.round(performance.now() - t0);
+        const ct = res.headers.get("content-type") || "";
+        const data = ct.includes("application/json") ? await res.json() : await res.text();
+        displayResponse(endpoint, method, `${res.status} ${res.statusText}`, data, elapsed);
+        return { ok: res.ok, status: res.status, data };
+      } catch (err) {
+        const elapsed = Math.round(performance.now() - t0);
+        displayResponse(endpoint, method, "ERROR", { error: err.message }, elapsed);
+        return { ok: false, error: err };
+      }
+    }
+
+    // 1. All designs
+    async function fetchAllDesigns() {
+      const res = await apiRequest("/designs");
+      if (res.ok && Array.isArray(res.data?.data)) renderDesignsTable(res.data.data);
+    }
+
+    function renderDesignsTable(designs) {
+      const container = document.getElementById("designs-table-container");
+      const tbody = document.getElementById("designs-tbody");
+      tbody.innerHTML = "";
+      if (!designs.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:#64748b;">No designs found.</td></tr>';
+        container.style.display = "block";
+        return;
+      }
+      designs.forEach(d => {
+        const id = String(d.id ?? "");
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><strong>${esc(d.name || "Untitled")}</strong></td>
+          <td><code>${esc(d.figma_node_id || "-")}</code></td>
+          <td><code title="${esc(id)}">${esc(id.substring(0,8))}…</code></td>
+          <td>
+            <div class="actions-inline">
+              <button class="secondary" onclick="selectDesign('${esc(id)}')">Select</button>
+              <button class="secondary" onclick="quickGet('${esc(id)}')">View</button>
+              <button class="accent"    onclick="quickNormalize('${esc(id)}')">Norm</button>
+              <button class="purple"   onclick="quickClassify('${esc(id)}')">Classify</button>
+            </div>
+          </td>`;
+        tbody.appendChild(tr);
+      });
+      container.style.display = "block";
+    }
+
+    function selectDesign(id) { document.getElementById("input-design-id").value = id; }
+    function quickGet(id)       { selectDesign(id); getDesignById(); }
+    function quickNormalize(id) { selectDesign(id); normalizeDesign(); }
+    function quickClassify(id)  { selectDesign(id); classifyDesign(); }
+
+    // 2. Single design operations
+    function getSelectedId() {
+      const id = document.getElementById("input-design-id").value.trim();
+      if (!id) { alert("Enter or select a Design ID first."); return null; }
+      return id;
+    }
+
+    async function getDesignById() {
+      const id = getSelectedId(); if (!id) return;
+      await apiRequest(`/designs/${id}`);
+    }
+
+    async function normalizeDesign() {
+      const id = getSelectedId(); if (!id) return;
+      await apiRequest(`/designs/${id}/normalize`, { method: "POST" });
+    }
+
+    async function classifyDesign() {
+      const id = getSelectedId(); if (!id) return;
+      const res = await apiRequest(`/designs/${id}/classify`, { method: "POST" });
+      if (res.ok) renderClassifyResults(res.data);
+    }
+
+    async function orchestrateDesign() {
+      const id = getSelectedId(); if (!id) return;
+      await apiRequest(`/designs/${id}/orchestrate`, { method: "POST" });
+    }
+
+    // Render classify results as component cards
+    function renderClassifyResults(data) {
+      const components = data?.classified_design?.components || data?.components || [];
+      const grid = document.getElementById("components-grid");
+      const section = document.getElementById("classify-results");
+      grid.innerHTML = "";
+      if (!components.length) { section.style.display = "none"; return; }
+
+      components.forEach(c => {
+        const type = (c.type || "OTHER").toUpperCase();
+        const fields = c.fields || c;
+        const title = fields.title || c.name || "—";
+        const value = fields.value || "";
+        const desc  = fields.description || "";
+        const conf  = c.confidence != null ? `${Math.round(c.confidence * 100)}%` : "";
+        const pillClass = type === "KPI" ? "pill-kpi"
+                        : type === "CHART" ? "pill-chart"
+                        : type === "TABLE" ? "pill-table" : "pill-other";
+
+        const card = document.createElement("div");
+        card.style.cssText = "background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);";
+        card.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span class="pill ${pillClass}">${type}</span>
+            ${conf ? `<span style="font-size:11px;color:#94a3b8;">${conf} conf</span>` : ""}
+          </div>
+          <div style="font-weight:700;font-size:15px;margin-bottom:2px;">${esc(title)}</div>
+          ${value ? `<div style="font-size:22px;font-weight:800;color:#2563eb;">${esc(value)}</div>` : ""}
+          ${desc   ? `<div style="font-size:11px;color:#64748b;margin-top:4px;">${esc(desc)}</div>`  : ""}
+          <div style="font-size:10px;color:#cbd5e1;margin-top:6px;">id: ${esc(c.id || "")}</div>`;
+        grid.appendChild(card);
+      });
+      section.style.display = "block";
+      section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    // 3. Save design
+    async function saveDesign() {
+      const name   = document.getElementById("save-name").value.trim();
+      const nodeId = document.getElementById("save-node-id").value.trim();
+      const raw    = document.getElementById("save-json").value.trim();
+      if (!name) { alert("Enter a design name."); return; }
+      let json;
+      try { json = JSON.parse(raw); }
+      catch (e) { alert("Invalid JSON: " + e.message); return; }
+      const res = await apiRequest("/designs", {
+        method: "POST",
+        body: JSON.stringify({ name, figma_node_id: nodeId, design_json: json })
+      });
+      if (res.ok && res.data?.data?.[0]?.id) {
+        selectDesign(res.data.data[0].id);
+        fetchAllDesigns();
+      }
+    }
+
+    // 4. Health
+    async function checkHealth() { await apiRequest("/health"); }
+
+    // Utilities
+    function clearResponse() {
+      document.getElementById("output").textContent = "// Cleared";
+      document.getElementById("req-info").textContent = "Idle";
+      document.getElementById("classify-results").style.display = "none";
+    }
+    function copyResponse() {
+      navigator.clipboard.writeText(document.getElementById("output").textContent)
+        .then(() => alert("Copied!"))
+        .catch(e => alert("Copy failed: " + e));
+    }
+    function downloadResponse() {
+      const text = document.getElementById("output").textContent;
+      if (!text || text.startsWith("// ")) { alert("Nothing to download yet."); return; }
+      const info = document.getElementById("req-info").textContent;
+      const m = info.match(/([A-Z]+)\s+(\/[^\s—]+)/);
+      const slug = m ? m[2].replace(/\//g,"_").replace(/^_/,"").replace(/[^a-zA-Z0-9_-]/g,"") : "response";
+      const ts = new Date().toISOString().slice(0,16).replace(/:/g,"-");
+      let content = text;
+      try { content = JSON.stringify(JSON.parse(text), null, 2); } catch (_) {}
+      const a = Object.assign(document.createElement("a"), {
+        href: URL.createObjectURL(new Blob([content], { type: "application/json" })),
+        download: `${slug}_${ts}.json`
+      });
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }
+    function esc(s) {
+      return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+        .replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+    }
+
+    window.addEventListener("DOMContentLoaded", fetchAllDesigns);
+  </script>
+</body>
+</html>

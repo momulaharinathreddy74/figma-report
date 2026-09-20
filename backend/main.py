@@ -2,7 +2,8 @@ import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from supabase import create_client, Client
 from normalizer import normalize_node
@@ -49,14 +50,33 @@ class DesignData(BaseModel):
 
 
 # -------------------------
-# Test endpoint
+# Static files
 # -------------------------
 
-@app.get("/")
+app.mount(
+    "/static",
+    StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")),
+    name="static",
+)
+
+
+# -------------------------
+# Dashboard UI  (GET /)
+# -------------------------
+
+@app.get("/", response_class=HTMLResponse)
 def home():
-    return {
-        "message": "FastAPI is working"
-    }
+    html_path = os.path.join(os.path.dirname(__file__), "static", "dashboard.html")
+    return FileResponse(html_path, media_type="text/html")
+
+
+# -------------------------
+# Health check
+# -------------------------
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "message": "FastAPI is running"}
 
 
 # -------------------------
