@@ -288,7 +288,10 @@
                 method: "POST",
 
                 headers: {
-                  "Content-Type": "application/json"
+                  "Content-Type": "application/json",
+                  "apikey": message.apikey,
+                  "Authorization": "Bearer " + message.apikey,
+                  "Prefer": "return=minimal"
                 },
 
                 body: JSON.stringify(
@@ -299,7 +302,9 @@
 
 
             const result =
-              await response.json();
+              response.ok
+                ? null
+                : await response.json();
 
 
             if (!response.ok) {
@@ -315,11 +320,6 @@
               setStatus(
                 "Design saved successfully!",
                 "success"
-              );
-
-              console.log(
-                "FastAPI response:",
-                result
               );
             }
 

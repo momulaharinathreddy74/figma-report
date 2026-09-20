@@ -204,9 +204,8 @@ figma.ui.onmessage = async (msg) => {
 
     figma.ui.postMessage({
       type: "perform-save",
-
-      url: "http://127.0.0.1:8001/designs",
-
+      url: `${SUPABASE_URL}/rest/v1/designs`,
+      apikey: SUPABASE_KEY,
       body: {
         name: lastDesignData.name,
         figma_node_id: lastDesignData.id,

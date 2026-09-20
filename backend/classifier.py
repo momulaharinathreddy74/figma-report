@@ -525,28 +525,55 @@ def build_component(node, classification):
     }
 
 
-def find_components(node, components):
+def find_components(node, components, orphan_texts):
     if not isinstance(node, dict):
         return
     if is_dashboard_root(node):
         for child in get_children(node):
-            find_components(child, components)
+            find_components(child, components, orphan_texts)
         return
     classification = classify_node(node)
     label = classification["label"]
     if label == "OTHER":
-        for child in get_children(node):
-            find_components(child, components)
+        children = get_children(node)
+        if children:
+            for child in children:
+                find_components(child, components, orphan_texts)
+        else:
+            # A leaf node with no strong enough label to become a
+            # component — but if it carries text, it might still be
+            # exactly what a nearby flagged component is missing (e.g.
+            # a lone "Customer Map" heading that doesn't score as
+            # HEADER but is sitting right above an untitled chart).
+            # Previously this was silently dropped entirely; keep it
+            # as a candidate instead so the orchestrator stage has a
+            # chance to use it.
+            texts = get_texts(node)
+            if texts:
+                x, y = get_position(node)
+                width, height = get_size(node)
+                orphan_texts.append({
+                    "id": node.get("id"),
+                    "name": get_name(node),
+                    "text": " ".join(t.strip() for t in texts if t.strip()),
+                    "position": {"x": x, "y": y},
+                    "size": {"width": width, "height": height},
+                })
         return
     components.append(build_component(node, classification))
 
 
 def classify_tree(root):
     components = []
-    find_components(root, components)
+    orphan_texts = []
+    find_components(root, components, orphan_texts)
     components.sort(key=lambda item: (item["position"]["y"], item["position"]["x"]))
     return {
         "dashboard_name": get_name(root) or "Untitled Dashboard",
         "component_count": len(components),
-        "components": components
+        "components": components,
+        # Lone low-confidence text nodes that didn't score as any
+        # label but were never used by anything else either — free
+        # material for the orchestrator's gap-resolution step.
+        "orphan_texts": orphan_texts,
     }
