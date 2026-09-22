@@ -1,45 +1,37 @@
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+
+# --------------------------------------------------------------------
+# Company direction (this pass): focus only on KPI, CHART, and TABLE.
+# Everything else — sidebars, nav, headers, filters, lists, reviews,
+# anything — is OTHER. This is not "OTHER because we couldn't figure
+# it out" — it's OTHER by design; those categories no longer exist as
+# classifier outputs at all.
+# --------------------------------------------------------------------
 
 KEYWORDS = {
     "KPI": [
         "revenue", "sales", "profit", "income", "expense",
         "orders", "customers", "users", "growth", "conversion",
-        "sessions", "downloads", "transactions", "balance",
-        "budget", "target", "total", "average", "avg"
+        "sessions", "session", "duration", "downloads", "transactions",
+        "balance", "budget", "target", "total", "average", "avg"
     ],
     "CHART": [
+        # generic chart-ish words
         "chart", "graph", "analytics", "trend", "statistics",
-        "performance", "overview"
+        "performance", "overview",
+        # explicit chart-type words — a layer literally named "Donut" or
+        # "Funnel" with no other keyword should still register as CHART
+        "bar", "column", "line", "area", "pie", "donut", "scatter",
+        "histogram", "funnel", "radar", "gauge", "waterfall", "combo",
+        "heatmap", "treemap"
     ],
     "TABLE": [
         "table", "records", "transactions", "transaction history",
         "recent orders", "recent transactions", "customer list",
         "user list"
     ],
-    "SIDEBAR": [
-        "sidebar", "side bar", "side menu", "left menu",
-        "navigation panel"
-    ],
-    "NAV": [
-        "navbar", "navigation", "menu", "breadcrumb"
-    ],
-    "HEADER": [
-        "header", "topbar", "top bar", "toolbar",
-        "page title", "welcome", "greeting"
-    ],
-    "FILTER": [
-        "filter", "filters", "search", "sort", "dropdown",
-        "select", "date picker", "calendar", "date range"
-    ],
-    "LIST": [
-        "list", "activity", "notifications", "messages",
-        "recent", "items", "tasks", "events"
-    ],
-    "REVIEW": [
-        "review", "reviews", "rating", "testimonial", "feedback"
-    ]
 }
 
 # Layer names that are Figma auto-generated placeholders, never a real
@@ -138,7 +130,8 @@ def _keyword_pattern(keyword):
         # Alnum-only "word boundary": underscores/hyphens still count as
         # separators (so "total" matches inside "card_total_revenue"),
         # but a keyword must not be glued to another letter/digit (so
-        # "menu" does NOT match inside "+Add Menus").
+        # "bar" does NOT match inside "Sidebar", "menu" does NOT match
+        # inside "+Add Menus").
         pattern = re.compile(
             r"(?<![a-z0-9])" + re.escape(keyword.lower()) + r"(?![a-z0-9])"
         )
@@ -161,6 +154,15 @@ def is_day_or_month(text):
     return token in DAY_ABBREVS or token in MONTH_ABBREVS
 
 
+def _camel_split(s):
+    """Insert a space at camelCase boundaries so keyword matching sees
+    'pie Chart' instead of 'piechart' — without this, a layer literally
+    named 'pieChart' or 'donutChart' never matches 'pie'/'donut'/even
+    'chart' at all, since the alnum-boundary keyword matcher requires a
+    non-alnum character on both sides of a match."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", s)
+
+
 def is_generic_name(name):
     return bool(GENERIC_NAME_RE.match(name.strip()))
 
@@ -177,19 +179,6 @@ def humanize_name(name):
     return " ".join(tokens).title()
 
 
-def has_image_fill(node, depth=2):
-    """True if this node or a shallow descendant has an image fill —
-    a strong signal for an avatar/photo, used by the REVIEW rules."""
-    fills = (node.get("style") or {}).get("fills") or []
-    if isinstance(fills, list):
-        for fill in fills:
-            if isinstance(fill, dict) and str(fill.get("type", "")).upper() == "IMAGE":
-                return True
-    if depth <= 0:
-        return False
-    return any(has_image_fill(child, depth - 1) for child in get_children(node))
-
-
 def is_numeric(text):
     text = text.strip().replace(",", "")
     return bool(re.fullmatch(r"[₹$€£]?\s*-?\d+(\.\d+)?[KMBkmb%]?", text))
@@ -201,6 +190,30 @@ def is_percentage(text):
 
 def is_money(text):
     return bool(re.search(r"[₹$€£]\s*\d+|\d+\s*(usd|inr|eur|gbp)", text.lower()))
+
+
+def is_ratio(text):
+    """'27/80', '3 of 10' — a single 'X out of Y' reading. Counted
+    separately from is_numeric so a genuine ratio-style KPI value
+    isn't mistaken for two independent readings."""
+    t = text.strip()
+    return bool(re.fullmatch(r"\d+\s*/\s*\d+", t)) or bool(re.fullmatch(r"\d+\s+of\s+\d+", t, re.IGNORECASE))
+
+
+def is_duration(text):
+    """'2m 34s', '1h 20m', '12:34', '1:02:03' — time-duration KPI
+    values. Distinct from is_date: these are elapsed-time formats, not
+    calendar dates, and none of is_numeric/is_percentage/is_money
+    recognize them — a KPI card whose value is a duration ('Av. Session
+    Length: 2m 34s') would otherwise score as having no value at all."""
+    t = text.strip().lower()
+    if re.fullmatch(r"\d+\s*h\s*\d+\s*m", t) or re.fullmatch(r"\d+\s*m\s*\d+\s*s", t):
+        return True
+    if re.fullmatch(r"\d+\s*(h|hr|hrs|m|min|mins|s|sec|secs)", t):
+        return True
+    if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", t):
+        return True
+    return False
 
 
 def is_date(text):
@@ -224,7 +237,7 @@ def is_dashboard_root(node):
 
 
 def calculate_scores(node):
-    name = get_name(node).lower()
+    name = _camel_split(get_name(node)).lower()
     text = get_all_text(node)
     children = get_children(node)
     texts = get_texts(node)
@@ -238,7 +251,79 @@ def calculate_scores(node):
         if contains_keyword(text, words):
             scores[label] += 2
 
-    numeric_values = sum(is_numeric(t) or is_percentage(t) or is_money(t) for t in texts)
+    # An explicit chart-TYPE word in the name (not just generic "chart"/
+    # "graph"/"overview") is a stronger, more specific signal than a
+    # KPI keyword riding along in the same name (e.g. "revenue_line_
+    # chart" names a KPI-sounding metric AND a chart type at once —
+    # the explicit type word should decide it).
+    _STRONG_CHART_TYPE_WORDS = (
+        "bar", "column", "line", "area", "pie", "donut", "scatter",
+        "histogram", "funnel", "radar", "gauge", "waterfall", "combo",
+        "heatmap", "treemap"
+    )
+    strong_type_matched = any(_keyword_pattern(w).search(name) for w in _STRONG_CHART_TYPE_WORDS)
+    if strong_type_matched:
+        scores["CHART"] += 4
+
+    # --------------------------------------------------------
+    # Structural guards — geometry, not naming conventions.
+    #
+    # These exist because chart-type words ("bar", "line", "pie", ...)
+    # are common English words that show up in UI-control and icon
+    # names for reasons that have nothing to do with data
+    # visualization ("progress bar", an icon named "*-line" per a
+    # library's own style-variant convention, etc.). Naming
+    # conventions are specific to whichever design system produced a
+    # given file and will never be fully enumerable — a phrase list
+    # tuned to one design's vocabulary just breaks on the next one.
+    # Shape does not have that problem: an icon is small in EVERY
+    # design, a progress/loading indicator is a thin strip in EVERY
+    # design system, and a sidebar or navbar rail has an extreme
+    # aspect ratio in EVERY dashboard, regardless of what anyone
+    # named it. These guards generalize; a naming list does not.
+    # --------------------------------------------------------
+
+    # Icon-sized elements can never be a chart, whatever they're named.
+    if 0 < width < 40 and 0 < height < 40:
+        scores["CHART"] -= 25
+
+    # A thin strip (a progress bar, a loading indicator, a divider, a
+    # slim rail) is not a chart shape, whatever keyword it happens to
+    # contain in its name.
+    if width > 0 and height > 0:
+        if height / width > 3:
+            scores["CHART"] -= 10
+        if width / height > 8:
+            scores["CHART"] -= 6
+
+    # A generic chart-ish word ("overview", "analytics", "performance",
+    # "trend", "chart", "graph") is common English that can bubble up
+    # from anywhere in a subtree's text for reasons unrelated to a
+    # chart being present. On a SMALL element that's a plausible
+    # mini-chart/sparkline annotation. On a LARGE section, it's not
+    # nearly enough on its own — a real, reportable chart either names
+    # its specific type (a strong-type-word match, handled above) or
+    # shows real axis evidence (checked below); a big section winning
+    # CHART from one vague word floating in its bubbled text, with
+    # neither, is exactly the false-positive pattern worth blocking.
+    # Area, not any specific design's naming convention, is what
+    # distinguishes "small annotation" from "substantial section" in
+    # every design.
+    area = width * height
+    if not strong_type_matched and area > 20000:
+        scores["CHART"] -= 8
+
+    # --------------------------------------------------------
+    # KPI-specific signals
+    # --------------------------------------------------------
+
+    month_count = sum(1 for t in texts if t.strip().lower()[:3] in MONTH_ABBREVS)
+    day_count = sum(1 for t in texts if t.strip().lower()[:3] in DAY_ABBREVS)
+
+    numeric_values = sum(
+        is_numeric(t) or is_percentage(t) or is_money(t) or is_duration(t)
+        for t in texts
+    )
     if numeric_values >= 1:
         scores["KPI"] += 4
     if numeric_values >= 2:
@@ -247,36 +332,75 @@ def calculate_scores(node):
         scores["KPI"] += 2
     if any(is_money(t) for t in texts):
         scores["KPI"] += 2
+    if any(is_duration(t) for t in texts):
+        scores["KPI"] += 2
     if 0 < len(texts) <= 6:
         scores["KPI"] += 1
     if width > 700 or height > 350:
         scores["KPI"] -= 8
-    # A real KPI card is never icon-badge sized — this kills the false
-    # positives on tiny notification/nav-icon badges that carry a lone
-    # number (e.g. an unread-count bubble) and would otherwise land
-    # right at MIN_SCORE.
+    # A real KPI card is never icon-badge sized — kills false positives
+    # on tiny notification/nav-icon badges carrying a lone number.
     if 0 < width < 60 or 0 < height < 60:
         scores["KPI"] -= 10
     if len(texts) > 10:
         scores["KPI"] -= 6
     elif len(texts) > 6:
         scores["KPI"] -= 3
-
-    # Compute chart evidence BEFORE the structural bonuses below, so a
-    # plain wide/multi-child container (e.g. a list of 5 rows) can't
-    # earn chart points on shape alone — it needs at least one real
-    # chart signal (a month/day axis label, a numeric trend, or a
-    # cluster of percentages) first.
-    month_count = sum(1 for t in texts if t.strip().lower()[:3] in {"jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"})
-    day_count = sum(1 for t in texts if t.strip().lower()[:3] in {"sun","mon","tue","wed","thu","fri","sat"})
-    pct_count = sum(1 for t in texts if is_percentage(t))
-
-    has_chart_evidence = (
-        month_count >= 1
-        or day_count >= 1
-        or numeric_values >= 2
-        or pct_count >= 1
+    # Several month/day labels is a chart-axis signature, not a KPI
+    # card — without this, a name like "revenue_line_chart" (KPI
+    # keyword "revenue" + a real trend axis) can outscore CHART on
+    # keyword strength alone.
+    if month_count >= 2 or day_count >= 2:
+        scores["KPI"] -= 6
+    # A relative-time phrase ("2 days ago") is a testimonial/review
+    # signature, not a KPI card. Without SIDEBAR/NAV/HEADER/FILTER/
+    # LIST/REVIEW competing for the win anymore, a card with just a
+    # rating-like number and a short caption can cross MIN_SCORE on
+    # KPI's numeric-value bonus alone; explicitly suppress that.
+    if re.search(r"\b\d+\s*(day|days|hour|hours|week|weeks|month|months|year|years)\s*ago\b", text):
+        scores["KPI"] -= 10
+    # A node with 2+ SEPARATE non-percentage primary readings (plain
+    # numbers, money, durations, or "X/Y" ratios) AND multiple children
+    # is very likely a WRAPPER around several distinct KPI cards, not
+    # one card with one value — e.g. a parent group spanning "Active
+    # Users: 27/80" and "Questions Answered: 3,298" as two separate
+    # child cards. A single genuine KPI card has exactly one primary
+    # reading (percentages are typically a secondary delta, already
+    # excluded here). Without this, the wrapper wins the label itself
+    # and swallows every card beneath it into one component with
+    # mismatched, merged fields — the same "container swallows its
+    # children" failure mode fixed earlier for stacked review cards,
+    # just triggered by value-count here instead of raw size (sizes
+    # vary too much between design systems to use as the only signal).
+    primary_non_pct_values = sum(
+        (is_numeric(t) or is_money(t) or is_duration(t) or is_ratio(t)) and not is_percentage(t)
+        for t in texts
     )
+    if primary_non_pct_values >= 2 and len(children) >= 2:
+        scores["KPI"] -= 12
+    # Three or more percentages is a ranked breakdown/leaderboard (each
+    # named item has its own %), not a single KPI reading — a real KPI
+    # card has one primary value plus, at most, one secondary delta
+    # percentage.
+    pct_count = sum(1 for t in texts if is_percentage(t))
+    if pct_count >= 3:
+        scores["KPI"] -= 8
+
+    # --------------------------------------------------------
+    # Chart-specific signals
+    # --------------------------------------------------------
+
+    # Only real axis evidence — month or day labels — unlocks the
+    # structural bonuses below. Plain numbers (ranks, point totals,
+    # percentages) are too ubiquitous to trust as chart evidence on
+    # their own: a leaderboard has point counts, a table has row
+    # counts, a KPI card has its value — none of that is a chart axis.
+    # A genuine chart without month/day labels still gets credit
+    # through its explicit type-word match (bar/line/pie/...) above;
+    # this gate exists only to stop plain numeric content from
+    # promoting an otherwise-unlabeled section to CHART via shape
+    # alone.
+    has_chart_evidence = month_count >= 1 or day_count >= 1
 
     if has_chart_evidence:
         if len(children) >= 5:
@@ -298,11 +422,9 @@ def calculate_scores(node):
     elif day_count >= 3:
         scores["CHART"] += 4
 
-    if numeric_values >= 4 and (width > 300 or height > 200):
-        scores["CHART"] += 4
-
-    if pct_count >= 3:
-        scores["CHART"] += 6
+    # --------------------------------------------------------
+    # Table-specific signals
+    # --------------------------------------------------------
 
     table_header_words = {"name","price","status","options","date","amount","quantity","total","description","category","id","type","email","phone","tracking","order","orders","product","products","in stock","action","actions"}
     header_hits = sum(1 for t in texts if t.lower().strip() in table_header_words)
@@ -312,65 +434,23 @@ def calculate_scores(node):
         scores["TABLE"] += 5
     if len(texts) >= 6:
         scores["TABLE"] += 2
-    if len(children) >= 8:
-        scores["TABLE"] += 3
     if sum(is_date(t) for t in texts) >= 2:
         scores["TABLE"] += 2
-    if width >= 500 and height >= 150:
-        scores["TABLE"] += 3
-
-    if len(children) >= 3:
-        scores["SIDEBAR"] += 2
-    if width > 0 and height > 0 and width / height < 0.45:
-        scores["SIDEBAR"] += 3
-
-    if len(children) >= 2:
-        scores["NAV"] += 2
-    if width > 0 and height > 0 and width / height > 2:
-        scores["NAV"] += 2
-
-    if len(children) >= 1:
-        scores["HEADER"] += 1
-    if width > 0 and height > 0 and width / height > 2:
-        scores["HEADER"] += 2
-
-    if 1 <= len(children) <= 10:
-        scores["FILTER"] += 2
-    if any(is_date(t) for t in texts):
-        scores["FILTER"] += 2
-
-    if len(children) >= 3:
-        scores["LIST"] += 2
-    if len(children) >= 8:
-        scores["LIST"] += 2
-
-    # --------------------------------------------------------
-    # Review/testimonial-specific signals
-    # --------------------------------------------------------
-
-    if re.search(
-        r"\b\d+\s*(day|days|hour|hours|week|weeks|month|months|year|years)\s*ago\b",
-        text
-    ):
-        scores["REVIEW"] += 7
-
-    rating_like = sum(1 for t in texts if re.fullmatch(r"[0-5](\.\d)?", t.strip()))
-    if rating_like >= 1:
-        scores["REVIEW"] += 3
-
-    if has_image_fill(node):
-        scores["REVIEW"] += 3
-
-    if 2 <= len(texts) <= 8:
-        scores["REVIEW"] += 1
-
-    # A single testimonial card is compact (~500x270 in this design).
-    # A much wider/taller node is almost always a ROW of several cards
-    # whose combined child text trips these same signals — reject it
-    # here so find_components descends into the individual cards
-    # instead of swallowing them into one merged, data-losing component.
-    if width > 700 or height > 400:
-        scores["REVIEW"] -= 20
+    # Child count and size are pure geometry — they can't tell a real
+    # data table (rows sharing actual column headers like Name/Date/
+    # Amount) apart from a ranked list, a leaderboard, or any other
+    # large multi-item container. Without at least one recognized
+    # header word actually present, "many children + large size" is
+    # true of dozens of non-table UI patterns — it was letting exactly
+    # that class of content (leaderboards, ranked breakdowns) win
+    # TABLE with zero real column evidence, even though this
+    # classifier has no ability to extract actual rows/columns for
+    # them either way. Require genuine header-word evidence first.
+    if header_hits >= 1:
+        if len(children) >= 8:
+            scores["TABLE"] += 3
+        if width >= 500 and height >= 150:
+            scores["TABLE"] += 3
 
     return scores
 
@@ -399,7 +479,7 @@ def classify_node(node):
         "confidence": confidence,
         "score": best_score,
         "scores": scores,
-        "keywords": matched_keywords(get_name(node) + " " + get_all_text(node), KEYWORDS[best_label])
+        "keywords": matched_keywords(_camel_split(get_name(node)) + " " + get_all_text(node), KEYWORDS[best_label])
     }
 
 
@@ -412,7 +492,7 @@ def extract_kpi_fields(node):
         text = text.strip()
         if not text:
             continue
-        if value is None and (is_numeric(text) or is_percentage(text) or is_money(text)):
+        if value is None and (is_numeric(text) or is_percentage(text) or is_money(text) or is_duration(text) or is_ratio(text)):
             value = text
         elif title is None:
             title = text
@@ -421,18 +501,92 @@ def extract_kpi_fields(node):
     return {"title": title, "value": value, "description": description}
 
 
+# ============================================================
+# Chart subtype taxonomy
+#
+#   CHART
+#   ├── BAR        -> VERTICAL | HORIZONTAL | GROUPED | STACKED
+#   ├── LINE       -> SINGLE | MULTI
+#   ├── AREA       -> STACKED
+#   ├── PIE
+#   ├── DONUT
+#   ├── SCATTER
+#   ├── HISTOGRAM
+#   ├── FUNNEL
+#   ├── RADAR
+#   ├── GAUGE
+#   ├── WATERFALL
+#   ├── COMBO
+#   ├── HEATMAP
+#   └── TREEMAP
+#
+# Rule-based and explainable, same philosophy as the rest of this
+# classifier: matched from the layer's own name/text first (most
+# reliable), with a couple of light structural heuristics where text
+# alone can't disambiguate (e.g. single- vs multi-series line charts).
+# ============================================================
+
+_NO_SUBTYPE_CHART_KEYWORDS = [
+    (("donut",), "DONUT"),
+    (("pie",), "PIE"),
+    (("scatter", "scatterplot"), "SCATTER"),
+    (("histogram",), "HISTOGRAM"),
+    (("funnel",), "FUNNEL"),
+    (("radar", "spider chart", "spider graph"), "RADAR"),
+    (("gauge", "speedometer"), "GAUGE"),
+    (("waterfall",), "WATERFALL"),
+    (("heatmap", "heat map"), "HEATMAP"),
+    (("treemap", "tree map"), "TREEMAP"),
+    (("combo", "combination chart"), "COMBO"),
+]
+
+
+def _looks_multi_series(node):
+    """Crude but explainable: repeated 4-digit years (e.g. a legend of
+    '2020' / '2021') or several short legend-like tokens suggest more
+    than one series is being compared on the same chart."""
+    texts = get_texts(node)
+    year_tokens = {t.strip() for t in texts if re.fullmatch(r"(19|20)\d{2}", t.strip())}
+    return len(year_tokens) >= 2
+
+
+def classify_chart_type(node) -> Dict[str, Optional[str]]:
+    """Returns {'category', 'subtype', 'chart_type'} — chart_type is
+    'CATEGORY/SUBTYPE' when there's a subtype, else just 'CATEGORY',
+    else 'UNKNOWN' if nothing specific enough could be determined."""
+    combined = (_camel_split(get_name(node)) + " " + get_all_text(node)).lower()
+
+    for keywords, category in _NO_SUBTYPE_CHART_KEYWORDS:
+        if any(_keyword_pattern(kw).search(combined) for kw in keywords):
+            return {"category": category, "subtype": None, "chart_type": category}
+
+    if _keyword_pattern("area").search(combined):
+        return {"category": "AREA", "subtype": "STACKED", "chart_type": "AREA/STACKED"}
+
+    if _keyword_pattern("line").search(combined):
+        subtype = "MULTI" if _looks_multi_series(node) else "SINGLE"
+        return {"category": "LINE", "subtype": subtype, "chart_type": f"LINE/{subtype}"}
+
+    if _keyword_pattern("bar").search(combined) or _keyword_pattern("column").search(combined):
+        if _keyword_pattern("stacked").search(combined):
+            subtype = "STACKED"
+        elif any(_keyword_pattern(kw).search(combined) for kw in ("grouped", "clustered")):
+            subtype = "GROUPED"
+        elif _keyword_pattern("horizontal").search(combined):
+            subtype = "HORIZONTAL"
+        else:
+            subtype = "VERTICAL"
+        return {"category": "BAR", "subtype": subtype, "chart_type": f"BAR/{subtype}"}
+
+    # A generic chart keyword ("chart", "graph", "analytics", "overview")
+    # matched at the top level but nothing names a specific chart type —
+    # can't responsibly guess a subtype from text alone.
+    return {"category": None, "subtype": None, "chart_type": "UNKNOWN"}
+
+
 def extract_chart_fields(node):
     raw_name = get_name(node)
-    combined = (raw_name + " " + get_all_text(node)).lower()
-    chart_type = "UNKNOWN"
-    if "line" in combined:
-        chart_type = "LINE"
-    elif "bar" in combined:
-        chart_type = "BAR"
-    elif "pie" in combined or "donut" in combined:
-        chart_type = "PIE"
-    elif "area" in combined:
-        chart_type = "AREA"
+    chart_info = classify_chart_type(node)
 
     # A meaningful layer name ("card_chart_order", "pieChart") is a far
     # more reliable title than picking the first bubbled-up text — that
@@ -455,44 +609,18 @@ def extract_chart_fields(node):
             title = stripped
             break
 
-    return {"title": title, "chart_type": chart_type}
+    return {
+        "title": title,
+        "chart_type": chart_info["chart_type"],
+        "chart_category": chart_info["category"],
+        "chart_subtype": chart_info["subtype"],
+    }
 
 
 def extract_table_fields(node):
     texts = get_texts(node)
     title = texts[0] if texts else get_name(node)
     return {"title": title, "columns": [], "rows": []}
-
-
-def extract_review_fields(node):
-    reviewer = None
-    rating = None
-    time_ago = None
-    body = None
-    for text in get_texts(node):
-        stripped = text.strip()
-        if not stripped:
-            continue
-        if rating is None and re.fullmatch(r"[0-5](\.\d)?", stripped):
-            rating = stripped
-        elif time_ago is None and re.search(r"\bago\b", stripped.lower()):
-            time_ago = stripped
-        elif reviewer is None and not re.search(r"\d", stripped) and len(stripped.split()) <= 4:
-            reviewer = stripped
-        elif body is None and len(stripped) > 20:
-            body = stripped
-    return {"reviewer": reviewer, "rating": rating, "time_ago": time_ago, "body": body}
-
-
-def extract_generic_fields(node, label):
-    texts = get_texts(node)
-    if label in ["SIDEBAR", "NAV", "LIST"]:
-        return {"title": get_name(node), "items": texts}
-    if label == "HEADER":
-        return {"title": texts[0] if texts else get_name(node), "texts": texts}
-    if label == "FILTER":
-        return {"label": get_name(node), "options": texts}
-    return {}
 
 
 def extract_fields(node, label):
@@ -502,9 +630,7 @@ def extract_fields(node, label):
         return extract_chart_fields(node)
     if label == "TABLE":
         return extract_table_fields(node)
-    if label == "REVIEW":
-        return extract_review_fields(node)
-    return extract_generic_fields(node, label)
+    return {}
 
 
 def build_component(node, classification):
@@ -540,14 +666,11 @@ def find_components(node, components, orphan_texts):
             for child in children:
                 find_components(child, components, orphan_texts)
         else:
-            # A leaf node with no strong enough label to become a
-            # component — but if it carries text, it might still be
-            # exactly what a nearby flagged component is missing (e.g.
-            # a lone "Customer Map" heading that doesn't score as
-            # HEADER but is sitting right above an untitled chart).
-            # Previously this was silently dropped entirely; keep it
-            # as a candidate instead so the orchestrator stage has a
-            # chance to use it.
+            # A leaf node that isn't a KPI, CHART, or TABLE — by design,
+            # per the current classification scope. Still worth keeping
+            # its text as a candidate for gap-resolution elsewhere (e.g.
+            # a stray "Customer Map" heading next to an untitled chart),
+            # rather than discarding it outright.
             texts = get_texts(node)
             if texts:
                 x, y = get_position(node)
@@ -572,8 +695,5 @@ def classify_tree(root):
         "dashboard_name": get_name(root) or "Untitled Dashboard",
         "component_count": len(components),
         "components": components,
-        # Lone low-confidence text nodes that didn't score as any
-        # label but were never used by anything else either — free
-        # material for the orchestrator's gap-resolution step.
         "orphan_texts": orphan_texts,
     }
